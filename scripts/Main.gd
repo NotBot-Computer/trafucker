@@ -13,22 +13,24 @@ var boards: Array[PlayerBoard] = []
 var state := "playing"
 
 func _ready() -> void:
+	var skins := GameSettings.skins
+
 	board1.player_name = "P1"
 	board1.key_left = KEY_A
 	board1.key_right = KEY_D
-	board1.body_color = Color(0.231, 0.435, 0.878)
+	board1.body_color = skins[0] if skins.size() > 0 else Color(0.231, 0.435, 0.878)
 
 	board2.position.x = board1.board_width + BOARD_GAP
 	board2.player_name = "P2"
 	board2.key_left = KEY_LEFT
 	board2.key_right = KEY_RIGHT
-	board2.body_color = Color(0.878, 0.278, 0.231)
+	board2.body_color = skins[1] if skins.size() > 1 else Color(0.878, 0.278, 0.231)
 
 	boards = [board1, board2]
 	for b in boards:
 		b.crashed.connect(_on_board_crashed)
 
-	status_label.text = "P1: A / D      P2: Left / Right"
+	status_label.text = "P1: A / D      P2: Left / Right      ESC: menu"
 	_start_round()
 
 func _start_round() -> void:
@@ -56,6 +58,9 @@ func _end_round() -> void:
 	overlay.visible = true
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+		return
 	if state != "gameover":
 		return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ENTER:

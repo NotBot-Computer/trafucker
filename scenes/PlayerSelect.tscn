@@ -1,0 +1,60 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/PlayerSelect.gd" id="1_select"]
+
+[node name="PlayerSelect" type="Control"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1_select")
+
+[node name="Background" type="ColorRect" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.078, 0.086, 0.165, 1.0)
+
+[node name="Title" type="Label" parent="."]
+anchor_right = 1.0
+offset_top = 140.0
+offset_bottom = 180.0
+theme_override_font_sizes/font_size = 28
+horizontal_alignment = 1
+text = "HOW MANY PLAYERS?"
+
+[node name="Players2Button" type="Button" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -100.0
+offset_right = 100.0
+offset_top = 260.0
+offset_bottom = 308.0
+theme_override_font_sizes/font_size = 18
+text = "2 PLAYERS"
+
+[node name="Players3Button" type="Button" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -100.0
+offset_right = 100.0
+offset_top = 320.0
+offset_bottom = 368.0
+disabled = true
+theme_override_font_sizes/font_size = 18
+text = "3 PLAYERS (SOON)"
+
+[node name="Players4Button" type="Button" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -100.0
+offset_right = 100.0
+offset_top = 380.0
+offset_bottom = 428.0
+disabled = true
+theme_override_font_sizes/font_size = 18
+text = "4 PLAYERS (SOON)"
+
+[node name="BackButton" type="Button" parent="."]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 100.0
+offset_bottom = 56.0
+text = "BACK"

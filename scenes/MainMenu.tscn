@@ -1,0 +1,39 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/MainMenu.gd" id="1_menu"]
+
+[node name="MainMenu" type="Control"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1_menu")
+
+[node name="Background" type="ColorRect" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.078, 0.086, 0.165, 1.0)
+
+[node name="Title" type="Label" parent="."]
+anchor_right = 1.0
+offset_top = 220.0
+offset_bottom = 280.0
+theme_override_font_sizes/font_size = 48
+horizontal_alignment = 1
+text = "TRAFFIC TOWER"
+
+[node name="Subtitle" type="Label" parent="."]
+anchor_right = 1.0
+offset_top = 285.0
+offset_bottom = 315.0
+theme_override_font_sizes/font_size = 16
+horizontal_alignment = 1
+text = "steer the cars and don't crash"
+
+[node name="PlayButton" type="Button" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -80.0
+offset_right = 80.0
+offset_top = 400.0
+offset_bottom = 448.0
+theme_override_font_sizes/font_size = 20
+text = "PLAY"
