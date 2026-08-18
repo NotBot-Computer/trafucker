@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Traffic Tower</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <div id="hud">
+        <div id="title-bar">
+          <span id="title-sub">Steer the cars and</span>
+          <span id="title-main">don't crash</span>
+        </div>
+        <div id="status-line"></div>
+      </div>
+      <canvas id="game-canvas"></canvas>
+      <div id="overlay" class="hidden">
+        <div id="overlay-box">
+          <div id="overlay-title"></div>
+          <div id="overlay-body"></div>
+          <div id="overlay-hint">Press ENTER to play again</div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
