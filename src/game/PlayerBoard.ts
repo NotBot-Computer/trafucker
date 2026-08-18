@@ -8,6 +8,12 @@ interface Obstacle {
   darkColor: string;
 }
 
+interface DriftMark {
+  x: number;
+  y: number;
+  age: number;
+}
+
 const LANE_COUNT = 3;
 const CAR_WIDTH_RATIO = 0.22;
 const CAR_HEIGHT_RATIO = 0.14;
@@ -15,7 +21,12 @@ const BASE_SPEED = 160;
 const SPEED_PER_SECOND = 6;
 const SPAWN_INTERVAL_START = 1.1;
 const SPAWN_INTERVAL_MIN = 0.45;
-const LANE_LERP_SPEED = 12;
+
+const MAX_STEER_SPEED = 460; // px/s, lateral top speed
+const STEER_RESPONSE = 9; // higher = snappier approach to target velocity
+const MAX_TILT = 0.32; // radians, car banking when steering
+const DRIFT_MARK_LIFETIME = 0.4;
+const CRASH_SHAKE_DURATION = 0.25;
 
 const OBSTACLE_PALETTE: Array<{ color: string; darkColor: string }> = [
   { color: "#e2e2e2", darkColor: "#9c9c9c" },
@@ -26,29 +37,33 @@ const OBSTACLE_PALETTE: Array<{ color: string; darkColor: string }> = [
 
 export class PlayerBoard {
   config: PlayerConfig;
-  private laneIndex = Math.floor(LANE_COUNT / 2);
-  private targetLaneIndex = this.laneIndex;
   private carX = 0;
+  private carVX = 0;
+  private tilt = 0;
+  private driftMarks: DriftMark[] = [];
   private obstacles: Obstacle[] = [];
   private spawnTimer = 0;
   private elapsed = 0;
   private distance = 0;
   alive = true;
   private crashFlashTimer = 0;
+  private initialized = false;
 
   constructor(config: PlayerConfig) {
     this.config = config;
   }
 
   reset(): void {
-    this.laneIndex = Math.floor(LANE_COUNT / 2);
-    this.targetLaneIndex = this.laneIndex;
+    this.carVX = 0;
+    this.tilt = 0;
+    this.driftMarks = [];
     this.obstacles = [];
     this.spawnTimer = 0;
     this.elapsed = 0;
     this.distance = 0;
     this.alive = true;
     this.crashFlashTimer = 0;
+    this.initialized = false;
   }
 
   get result(): PlayerResult {
@@ -72,18 +87,45 @@ export class PlayerBoard {
   }
 
   update(dt: number, input: InputManager, width: number, height: number): void {
+    if (!this.initialized) {
+      this.carX = width / 2;
+      this.initialized = true;
+    }
+
     if (!this.alive) {
       this.crashFlashTimer += dt;
       return;
     }
 
-    if (input.wasPressed(this.config.keys.left)) {
-      this.targetLaneIndex = Math.max(0, this.targetLaneIndex - 1);
+    const left = input.isHeld(this.config.keys.left);
+    const right = input.isHeld(this.config.keys.right);
+    const targetVX = left && !right ? -MAX_STEER_SPEED : right && !left ? MAX_STEER_SPEED : 0;
+    const approach = 1 - Math.exp(-STEER_RESPONSE * dt);
+    this.carVX += (targetVX - this.carVX) * approach;
+
+    const shoulderW = width * 0.06;
+    const carW = width * CAR_WIDTH_RATIO;
+    const minX = shoulderW + carW / 2;
+    const maxX = width - shoulderW - carW / 2;
+    const nextX = this.carX + this.carVX * dt;
+    if (nextX < minX) {
+      this.carX = minX;
+      this.carVX = 0;
+    } else if (nextX > maxX) {
+      this.carX = maxX;
+      this.carVX = 0;
+    } else {
+      this.carX = nextX;
     }
-    if (input.wasPressed(this.config.keys.right)) {
-      this.targetLaneIndex = Math.min(LANE_COUNT - 1, this.targetLaneIndex + 1);
+
+    this.tilt = Math.max(-1, Math.min(1, this.carVX / MAX_STEER_SPEED)) * MAX_TILT;
+
+    if (Math.abs(this.carVX) > MAX_STEER_SPEED * 0.6) {
+      const carH = height * CAR_HEIGHT_RATIO;
+      this.driftMarks.push({ x: this.carX, y: height - 24 - carH * 0.15, age: 0 });
     }
-    this.laneIndex += (this.targetLaneIndex - this.laneIndex) * Math.min(1, LANE_LERP_SPEED * dt);
+    for (const mark of this.driftMarks) mark.age += dt;
+    this.driftMarks = this.driftMarks.filter((m) => m.age < DRIFT_MARK_LIFETIME);
 
     this.elapsed += dt;
     const speed = this.currentSpeed();
@@ -100,7 +142,6 @@ export class PlayerBoard {
     }
     this.obstacles = this.obstacles.filter((o) => o.y < height + 80);
 
-    this.carX = this.laneCenterX(this.laneIndex, width);
     this.checkCollision(width, height);
   }
 
@@ -127,19 +168,21 @@ export class PlayerBoard {
     const carW = width * CAR_WIDTH_RATIO;
     const carH = height * CAR_HEIGHT_RATIO;
     const carY = height - carH - 24;
-    const carLeft = this.carX - carW / 2;
-    const carRight = this.carX + carW / 2;
+    const shrink = carW * 0.15;
+    const carLeft = this.carX - carW / 2 + shrink;
+    const carRight = this.carX + carW / 2 - shrink;
 
     for (const obstacle of this.obstacles) {
       const ox = this.laneCenterX(obstacle.lane, width);
-      const oLeft = ox - carW / 2;
-      const oRight = ox + carW / 2;
+      const oLeft = ox - carW / 2 + shrink;
+      const oRight = ox + carW / 2 - shrink;
       const oTop = obstacle.y;
       const oBottom = obstacle.y + carH;
       const overlapsX = carLeft < oRight && carRight > oLeft;
       const overlapsY = carY < oBottom && carY + carH > oTop;
       if (overlapsX && overlapsY) {
         this.alive = false;
+        this.crashFlashTimer = 0;
         break;
       }
     }
@@ -152,7 +195,18 @@ export class PlayerBoard {
     ctx.rect(0, 0, width, height);
     ctx.clip();
 
+    if (!this.alive && this.crashFlashTimer < CRASH_SHAKE_DURATION) {
+      const shake = (1 - this.crashFlashTimer / CRASH_SHAKE_DURATION) * 6;
+      ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+    }
+
     this.renderRoad(ctx, width, height);
+
+    for (const mark of this.driftMarks) {
+      const alpha = 1 - mark.age / DRIFT_MARK_LIFETIME;
+      ctx.fillStyle = `rgba(20,20,20,${alpha * 0.3})`;
+      ctx.fillRect(mark.x - 3, mark.y, 3, 10);
+    }
 
     for (const obstacle of this.obstacles) {
       this.renderCar(
@@ -160,17 +214,22 @@ export class PlayerBoard {
         this.laneCenterX(obstacle.lane, width),
         obstacle.y,
         width,
-        height,
         obstacle.color,
         obstacle.darkColor,
+        0,
       );
     }
 
     const carH = height * CAR_HEIGHT_RATIO;
     const carY = height - carH - 24;
     ctx.globalAlpha = this.alive ? 1 : 0.35;
-    this.renderCar(ctx, this.carX, carY, width, height, this.config.color, this.config.darkColor);
+    this.renderCar(ctx, this.carX, carY, width, this.config.color, this.config.darkColor, this.tilt);
     ctx.globalAlpha = 1;
+
+    if (!this.alive && this.crashFlashTimer < 0.15) {
+      ctx.fillStyle = `rgba(255,255,255,${(1 - this.crashFlashTimer / 0.15) * 0.7})`;
+      ctx.fillRect(0, 0, width, height);
+    }
 
     if (!this.alive) {
       ctx.fillStyle = "rgba(20, 10, 10, 0.55)";
@@ -224,27 +283,32 @@ export class PlayerBoard {
     cx: number,
     topY: number,
     width: number,
-    _height: number,
     color: string,
     darkColor: string,
+    tilt: number,
   ): void {
     const w = width * CAR_WIDTH_RATIO;
     const h = width * CAR_WIDTH_RATIO * 1.7;
-    const x = cx - w / 2;
-    const y = topY;
+    const cy = topY + h / 2;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    if (tilt !== 0) ctx.rotate(tilt);
 
     ctx.fillStyle = "rgba(0,0,0,0.25)";
-    ctx.fillRect(x + 3, y + 4, w, h);
+    ctx.fillRect(-w / 2 + 3, -h / 2 + 4, w, h);
 
     ctx.fillStyle = color;
-    ctx.fillRect(x, y, w, h);
+    ctx.fillRect(-w / 2, -h / 2, w, h);
 
     ctx.fillStyle = darkColor;
-    ctx.fillRect(x + w * 0.12, y + h * 0.14, w * 0.76, h * 0.24);
-    ctx.fillRect(x + w * 0.12, y + h * 0.62, w * 0.76, h * 0.24);
+    ctx.fillRect(-w / 2 + w * 0.12, -h / 2 + h * 0.14, w * 0.76, h * 0.24);
+    ctx.fillRect(-w / 2 + w * 0.12, -h / 2 + h * 0.62, w * 0.76, h * 0.24);
 
     ctx.strokeStyle = "rgba(0,0,0,0.35)";
     ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, w, h);
+    ctx.strokeRect(-w / 2, -h / 2, w, h);
+
+    ctx.restore();
   }
 }
