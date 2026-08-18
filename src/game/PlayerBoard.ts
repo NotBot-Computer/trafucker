@@ -1,6 +1,6 @@
 import { InputManager } from "./InputManager";
 import type { PlayerConfig, PlayerResult } from "./types";
-import { type CarSprite, carSize, drawCar, pickRandomCarSprite } from "./entities/Car";
+import { TAILLIGHT, type CarSprite, carSize, drawCar, pickRandomCarSprite } from "./entities/Car";
 import { drawRoad, laneCenterX, roadMetrics } from "./entities/Road";
 
 interface Obstacle {
@@ -182,7 +182,7 @@ export class PlayerBoard {
       kind: "sedan",
       color: this.config.color,
       darkColor: this.config.darkColor,
-      accent: this.config.darkColor,
+      accent: TAILLIGHT,
     };
 
     ctx.save();

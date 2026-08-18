@@ -7,6 +7,13 @@ export interface CarSprite {
   accent: string;
 }
 
+export const TAILLIGHT = "#c0392b";
+const HEADLIGHT = "#fff3b8";
+const GLASS = "#8fa6b3";
+const GLASS_GLINT = "#d9e8ee";
+const WHEEL = "#181818";
+const MIRROR = "#202020";
+
 const SEDAN_PALETTE: Array<Omit<CarSprite, "kind" | "accent">> = [
   { color: "#e9e9e9", darkColor: "#b0b0b0" },
   { color: "#2b2b2b", darkColor: "#131313" },
@@ -30,7 +37,7 @@ export function pickRandomCarSprite(): CarSprite {
     return { kind: "truck", ...preset };
   }
   const preset = SEDAN_PALETTE[Math.floor(Math.random() * SEDAN_PALETTE.length)];
-  return { kind: "sedan", accent: preset.darkColor, ...preset };
+  return { kind: "sedan", accent: TAILLIGHT, ...preset };
 }
 
 export function carSize(laneWidth: number, kind: CarKind): { w: number; h: number } {
@@ -40,6 +47,88 @@ export function carSize(laneWidth: number, kind: CarKind): { w: number; h: numbe
   }
   const w = laneWidth * 0.62;
   return { w, h: w * 1.7 };
+}
+
+// Pixel-grid templates: top-down car, front at row 0. Each string is one row,
+// each character one "pixel" cell. '.' is transparent (creates the rounded
+// silhouette); other letters map to a color role in buildColorMap().
+// B=body  H=hood/roof highlight  S=shade  W=glass  w=glass glint
+// K=wheel  M=mirror  Y=headlight  R=taillight
+const SEDAN_TEMPLATE = [
+  "...BBBBB...",
+  "..BBBBBBB..",
+  ".YBBBHBBBY.",
+  "KBBBBHBBBBK",
+  "MBBBBHBBBBM",
+  ".WwWWWWWWW.",
+  ".WWWWWWWWW.",
+  ".WWWWWWWWW.",
+  ".SSSSSSSSS.",
+  ".BBBBHBBBB.",
+  ".BBBBHBBBB.",
+  ".BBBBHBBBB.",
+  ".BBBBHBBBB.",
+  ".SSSSSSSSS.",
+  ".WWWwWWWWW.",
+  ".WWWWWWWWW.",
+  "KRBBBHBBBRK",
+  "...BBBBB...",
+];
+
+const TRUCK_TEMPLATE = [
+  "...BBBBB...",
+  "..BBBBBBB..",
+  ".YBBBHBBBY.",
+  "KBBBBHBBBBK",
+  "MBBBBHBBBBM",
+  ".WwWWWWWWW.",
+  ".WWWWWWWWW.",
+  ".SSSSSSSSS.",
+  ".BBBBHBBBB.",
+  ".BBBBHBBBB.",
+  "KBBBBHBBBBK",
+  "KBBBBHBBBBK",
+  ".BBBBHBBBB.",
+  ".BBBBHBBBB.",
+  ".SSSSSSSSS.",
+  ".BBBBHBBBB.",
+  ".BBBBHBBBB.",
+  "KBBBBHBBBBK",
+  "KBBBBHBBBBK",
+  ".BBBBHBBBB.",
+  ".BBBBHBBBB.",
+  ".SSSSSSSSS.",
+  "KRBBBHBBBRK",
+  ".SSSSSSSSS.",
+  "...BBBBB...",
+];
+
+function lighten(hex: string, amount: number): string {
+  const clean = hex.replace("#", "");
+  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const num = parseInt(full, 16);
+  const r = Math.round(((num >> 16) & 255) + (255 - ((num >> 16) & 255)) * amount);
+  const g = Math.round(((num >> 8) & 255) + (255 - ((num >> 8) & 255)) * amount);
+  const b = Math.round((num & 255) + (255 - (num & 255)) * amount);
+  return `rgb(${r},${g},${b})`;
+}
+
+function buildColorMap(sprite: CarSprite): Record<string, string> {
+  return {
+    B: sprite.color,
+    H: lighten(sprite.color, 0.35),
+    S: sprite.darkColor,
+    W: GLASS,
+    w: GLASS_GLINT,
+    K: WHEEL,
+    M: MIRROR,
+    Y: HEADLIGHT,
+    R: sprite.accent,
+  };
+}
+
+function templateFor(kind: CarKind): string[] {
+  return kind === "truck" ? TRUCK_TEMPLATE : SEDAN_TEMPLATE;
 }
 
 /** Draws a car centered horizontally at cx, with its top edge at topY. */
@@ -52,32 +141,55 @@ export function drawCar(
   tilt = 0,
 ): void {
   const { w, h } = carSize(laneWidth, sprite.kind);
-  const cy = topY + h / 2;
+  const template = templateFor(sprite.kind);
+  const rows = template.length;
+  const cols = template[0].length;
+  const cellW = w / cols;
+  const cellH = h / rows;
+  const colorMap = buildColorMap(sprite);
+
+  const at = (r: number, c: number): string =>
+    r < 0 || r >= rows || c < 0 || c >= cols ? "." : template[r][c];
 
   ctx.save();
-  ctx.translate(cx, cy);
+  ctx.translate(cx, topY + h / 2);
   if (tilt !== 0) ctx.rotate(tilt);
+  ctx.translate(-w / 2, -h / 2);
 
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.fillRect(-w / 2 + 2, -h / 2 + 3, w, h);
-
-  ctx.fillStyle = sprite.color;
-  ctx.fillRect(-w / 2, -h / 2, w, h);
-
-  if (sprite.kind === "truck") {
-    ctx.fillStyle = sprite.darkColor;
-    ctx.fillRect(-w / 2 + w * 0.14, -h / 2 + h * 0.08, w * 0.72, h * 0.18);
-    ctx.fillStyle = sprite.accent;
-    ctx.fillRect(-w / 2 + w * 0.08, h / 2 - h * 0.14, w * 0.84, h * 0.1);
-  } else {
-    ctx.fillStyle = sprite.darkColor;
-    ctx.fillRect(-w / 2 + w * 0.12, -h / 2 + h * 0.14, w * 0.76, h * 0.24);
-    ctx.fillRect(-w / 2 + w * 0.12, -h / 2 + h * 0.62, w * 0.76, h * 0.24);
+  // Soft ground shadow, offset slightly, matching the sprite silhouette.
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (template[r][c] === ".") continue;
+      ctx.fillRect(c * cellW + 2, r * cellH + 3, cellW + 0.6, cellH + 0.6);
+    }
   }
 
-  ctx.strokeStyle = "rgba(0,0,0,0.35)";
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(-w / 2, -h / 2, w, h);
+  // Fill pass.
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const ch = template[r][c];
+      if (ch === ".") continue;
+      ctx.fillStyle = colorMap[ch] ?? sprite.color;
+      ctx.fillRect(c * cellW, r * cellH, cellW + 0.6, cellH + 0.6);
+    }
+  }
+
+  // Outline pass: darken any edge of a filled cell that borders empty space,
+  // so the silhouette reads as one clean shape instead of a grid of squares.
+  const outline = Math.max(1, Math.min(cellW, cellH) * 0.22);
+  ctx.fillStyle = "rgba(10,10,10,0.55)";
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (template[r][c] === ".") continue;
+      const x = c * cellW;
+      const y = r * cellH;
+      if (at(r - 1, c) === ".") ctx.fillRect(x, y, cellW + 0.6, outline);
+      if (at(r + 1, c) === ".") ctx.fillRect(x, y + cellH - outline, cellW + 0.6, outline);
+      if (at(r, c - 1) === ".") ctx.fillRect(x, y, outline, cellH + 0.6);
+      if (at(r, c + 1) === ".") ctx.fillRect(x + cellW - outline, y, outline, cellH + 0.6);
+    }
+  }
 
   ctx.restore();
 }
