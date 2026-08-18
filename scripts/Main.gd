@@ -1,9 +1,13 @@
 extends Node2D
 
-const BOARD_GAP := 8.0
+const BOARD_GAP := 48.0
+const CAMERA_ZOOM := 1.15
 const PLAYER_BOARD_SCENE := preload("res://scenes/PlayerBoard.tscn")
+const LANE_DIVIDER_SCENE := preload("res://scenes/LaneDivider.tscn")
 
+@onready var camera: Camera2D = $Camera2D
 @onready var boards_container: Node2D = $BoardsContainer
+@onready var dividers_container: Node2D = $DividersContainer
 @onready var status_label: Label = $HUD/StatusLabel
 @onready var overlay: Control = $HUD/Overlay
 @onready var overlay_title: Label = $HUD/Overlay/OverlayTitle
@@ -20,10 +24,13 @@ func _ready() -> void:
 func _build_boards() -> void:
 	for child in boards_container.get_children():
 		child.queue_free()
+	for child in dividers_container.get_children():
+		child.queue_free()
 	boards = []
 
 	var count: int = GameSettings.player_count
 	var board_width := 0.0
+	var board_height := 0.0
 
 	for i in range(count):
 		var board: PlayerBoard = PLAYER_BOARD_SCENE.instantiate()
@@ -36,15 +43,27 @@ func _build_boards() -> void:
 		board.crashed.connect(_on_board_crashed)
 		boards.append(board)
 		board_width = board.board_width
+		board_height = board.board_height
 
 	var total_width: float = count * board_width + (count - 1) * BOARD_GAP
 	var viewport_width: float = get_viewport().get_visible_rect().size.x
 	var start_x: float = max(0.0, (viewport_width - total_width) / 2.0)
 
 	var x := start_x
-	for board in boards:
-		board.position.x = x
-		x += board.board_width + BOARD_GAP
+	for i in range(boards.size()):
+		boards[i].position.x = x
+		x += board_width
+		if i < boards.size() - 1:
+			var divider: Node2D = LANE_DIVIDER_SCENE.instantiate()
+			divider.width = BOARD_GAP
+			divider.height = board_height
+			dividers_container.add_child(divider)
+			divider.position = Vector2(x, 0)
+			x += BOARD_GAP
+
+	camera.position = Vector2(start_x + total_width / 2.0, board_height / 2.0)
+	camera.zoom = Vector2(CAMERA_ZOOM, CAMERA_ZOOM)
+	camera.make_current()
 
 func _status_text() -> String:
 	var parts: Array[String] = []
