@@ -16,20 +16,70 @@ const PLAYER_SKINS: Array[Dictionary] = [
 # Chosen texture per player, filled in by SkinSelect before Main starts.
 var skins: Array[Texture2D] = [PLAYER_SKINS[0]["texture"], PLAYER_SKINS[1]["texture"]]
 
-# Traffic car textures, picked at random by PlayerBoard when spawning.
-const TRAFFIC_SEDAN_TEXTURES: Array[Texture2D] = [
-	preload("res://sprites/cars/sedan_white.png"),
-	preload("res://sprites/cars/sedan_black.png"),
-	preload("res://sprites/cars/sedan_silver.png"),
-	preload("res://sprites/cars/sedan_slate.png"),
-	preload("res://sprites/cars/sedan_tan.png"),
-	preload("res://sprites/cars/sedan_maroon.png"),
-]
-
-const TRAFFIC_TRUCK_TEXTURES: Array[Texture2D] = [
-	preload("res://sprites/cars/truck_white.png"),
-	preload("res://sprites/cars/truck_tan.png"),
-	preload("res://sprites/cars/truck_bluegray.png"),
+# Traffic vehicle kinds. width_frac is a fraction of lane width; height is
+# width * height_frac. weight controls how often a kind is picked relative
+# to the others (see PlayerBoard._pick_traffic_kind).
+const TRAFFIC_KINDS: Array[Dictionary] = [
+	{
+		"kind": "sedan", "width_frac": 0.62, "height_frac": 1.7, "weight": 34,
+		"textures": [
+			preload("res://sprites/cars/sedan_white.png"),
+			preload("res://sprites/cars/sedan_black.png"),
+			preload("res://sprites/cars/sedan_silver.png"),
+			preload("res://sprites/cars/sedan_slate.png"),
+			preload("res://sprites/cars/sedan_tan.png"),
+			preload("res://sprites/cars/sedan_maroon.png"),
+		],
+	},
+	{
+		"kind": "suv", "width_frac": 0.68, "height_frac": 1.8, "weight": 20,
+		"textures": [
+			preload("res://sprites/cars/suv_tan.png"),
+			preload("res://sprites/cars/suv_gray.png"),
+			preload("res://sprites/cars/suv_blue.png"),
+			preload("res://sprites/cars/suv_white.png"),
+		],
+	},
+	{
+		"kind": "pickup", "width_frac": 0.62, "height_frac": 1.95, "weight": 14,
+		"textures": [
+			preload("res://sprites/cars/pickup_red.png"),
+			preload("res://sprites/cars/pickup_olive.png"),
+			preload("res://sprites/cars/pickup_teal.png"),
+			preload("res://sprites/cars/pickup_white.png"),
+		],
+	},
+	{
+		"kind": "van", "width_frac": 0.58, "height_frac": 2.2, "weight": 10,
+		"textures": [
+			preload("res://sprites/cars/van_white.png"),
+			preload("res://sprites/cars/van_blue.png"),
+			preload("res://sprites/cars/van_red.png"),
+		],
+	},
+	{
+		"kind": "truck", "width_frac": 0.56, "height_frac": 2.6, "weight": 10,
+		"textures": [
+			preload("res://sprites/cars/truck_white.png"),
+			preload("res://sprites/cars/truck_tan.png"),
+			preload("res://sprites/cars/truck_bluegray.png"),
+		],
+	},
+	{
+		"kind": "bus", "width_frac": 0.60, "height_frac": 3.0, "weight": 6,
+		"textures": [
+			preload("res://sprites/cars/bus_transit.png"),
+			preload("res://sprites/cars/bus_coach.png"),
+		],
+	},
+	{
+		"kind": "motorcycle", "width_frac": 0.30, "height_frac": 2.05, "weight": 6,
+		"textures": [
+			preload("res://sprites/cars/moto_red.png"),
+			preload("res://sprites/cars/moto_maroon.png"),
+			preload("res://sprites/cars/moto_teal.png"),
+		],
+	},
 ]
 
 # One steering + confirm binding per player slot. Keeps 4 players on a single

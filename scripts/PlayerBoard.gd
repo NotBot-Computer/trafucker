@@ -27,6 +27,8 @@ const MAX_TILT := 0.32
 @onready var obstacle_container: Node2D = $ObstacleContainer
 @onready var player_car: Car = $PlayerCar
 
+const PLAYER_KIND := {"width_frac": 0.62, "height_frac": 1.7}
+
 var car_x: float
 var car_vx: float = 0.0
 var elapsed: float = 0.0
@@ -46,7 +48,7 @@ func start_round() -> void:
 		child.queue_free()
 
 	player_car.body_color = body_color
-	var sz := _car_size(false)
+	var sz := _car_size(PLAYER_KIND)
 	player_car.set_size(sz.x, sz.y)
 	if player_texture != null:
 		player_car.set_texture(player_texture)
@@ -64,13 +66,10 @@ func start_round() -> void:
 	road.distance = 0.0
 	road.queue_redraw()
 
-func _car_size(is_truck: bool) -> Vector2:
+func _car_size(kind_cfg: Dictionary) -> Vector2:
 	var lw := road.lane_width()
-	if is_truck:
-		var w := lw * 0.56
-		return Vector2(w, w * 2.6)
-	var w := lw * 0.62
-	return Vector2(w, w * 1.7)
+	var w: float = lw * kind_cfg["width_frac"]
+	return Vector2(w, w * kind_cfg["height_frac"])
 
 func current_speed() -> float:
 	return BASE_SPEED + elapsed * SPEED_PER_SECOND
@@ -92,7 +91,7 @@ func _process(delta: float) -> void:
 	var approach := 1.0 - exp(-STEER_RESPONSE * delta)
 	car_vx += (target_vx - car_vx) * approach
 
-	var sz := _car_size(false)
+	var sz := _car_size(PLAYER_KIND)
 	var shoulder := board_width * 0.06
 	var min_x := shoulder + sz.x * 0.5
 	var max_x := board_width - shoulder - sz.x * 0.5
@@ -138,21 +137,27 @@ func _spawn_obstacle() -> void:
 		return
 
 	var lane: int = available[randi() % available.size()]
-	var is_truck := randf() < 0.25
+	var kind_cfg := _pick_traffic_kind()
 	var obstacle: Car = CAR_SCENE.instantiate()
 	obstacle_container.add_child(obstacle)
-	var sz := _car_size(is_truck)
+	var sz := _car_size(kind_cfg)
 	obstacle.set_size(sz.x, sz.y)
-	obstacle.set_texture(_random_traffic_texture(is_truck))
+	var textures: Array = kind_cfg["textures"]
+	obstacle.set_texture(textures[randi() % textures.size()])
 	obstacle.set_meta("lane", lane)
 	obstacle.position = Vector2(road.lane_center_x(lane), -sz.y - 40.0)
 
-func _random_traffic_texture(is_truck: bool) -> Texture2D:
-	if is_truck:
-		var trucks := GameSettings.TRAFFIC_TRUCK_TEXTURES
-		return trucks[randi() % trucks.size()]
-	var sedans := GameSettings.TRAFFIC_SEDAN_TEXTURES
-	return sedans[randi() % sedans.size()]
+func _pick_traffic_kind() -> Dictionary:
+	var kinds: Array = GameSettings.TRAFFIC_KINDS
+	var total := 0
+	for k in kinds:
+		total += int(k["weight"])
+	var r := randi() % total
+	for k in kinds:
+		r -= int(k["weight"])
+		if r < 0:
+			return k
+	return kinds[0]
 
 func _on_player_area_entered(_area: Area2D) -> void:
 	if not alive:

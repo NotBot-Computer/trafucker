@@ -29,7 +29,7 @@ Open the project folder in the Godot 4 editor (`godot --path .` from this direct
 
 ## Car art
 
-Cars are real sprites (`sprites/cars/*.png`) — 12 sedan colors (6 selectable player skins + 6 traffic-only colors) and 3 truck variants, generated as top-down orthographic pixel art. `GameSettings.gd` holds the texture lookup tables; `PlayerBoard.gd` assigns them to spawned `Car` instances.
+Cars are real sprites (`sprites/cars/*.png`) — top-down orthographic pixel art across 7 vehicle kinds: sedans (12 colors: 6 selectable player skins + 6 traffic-only), SUVs, pickups, vans, trucks, buses, and motorcycles. `GameSettings.TRAFFIC_KINDS` holds each kind's textures, size ratios, and spawn weight (sedans most common, buses/motorcycles rarest); `PlayerBoard.gd` picks a weighted-random kind and texture for every spawned traffic `Car`.
 
 Every `Car` (`scenes/Car.tscn`) has an empty `Sprite2D` child, so you can swap in your own art any time: open it in the editor and drag a PNG onto the Sprite2D's **Texture** property in the Inspector, or call `set_texture()` from code (see `PlayerBoard.gd` for examples). The placeholder shape (a colored `Polygon2D`) automatically hides once a texture is assigned. `Car.gd` scales whatever texture is provided to the car's collision size.
 
@@ -38,7 +38,7 @@ Every `Car` (`scenes/Car.tscn`) has an empty `Sprite2D` child, so you can swap i
 ```
 project.godot
 sprites/
-  cars/               generated top-down car/truck PNGs
+  cars/               generated top-down vehicle PNGs (sedans, SUVs, pickups, vans, trucks, buses, motorcycles)
 scenes/
   MainMenu.tscn       title screen, Play button
   PlayerSelect.tscn    choose 2/3/4 players
