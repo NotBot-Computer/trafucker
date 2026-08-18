@@ -22,6 +22,22 @@ npm install
 npm run dev
 ```
 
+## Project structure
+
+```
+src/
+  main.ts              entry point
+  style.css            HUD/page chrome styling
+  game/
+    Game.ts            orchestrates boards, input, resize, round state
+    InputManager.ts     keyboard state with edge-detection
+    PlayerBoard.ts      one player's simulation: steering, spawning, collision
+    types.ts            shared interfaces
+    entities/
+      Car.ts           car sprites, palettes, drawing
+      Road.ts          lane math and road/dash rendering
+```
+
 ## Roadmap
 
 - More competitive mini-modes beyond "don't crash" (time attack, reverse traffic, narrowing lanes, item pickups, etc.)
