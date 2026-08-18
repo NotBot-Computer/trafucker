@@ -2,63 +2,115 @@ extends Control
 
 const SKIN_NAMES := ["Blue", "Red", "Green", "Yellow", "Purple", "Orange"]
 
-var index1 := 0
-var index2 := 1
-var ready1 := false
-var ready2 := false
-
-@onready var swatch1: ColorRect = $P1Panel/Swatch
-@onready var swatch2: ColorRect = $P2Panel/Swatch
-@onready var name1: Label = $P1Panel/NameLabel
-@onready var name2: Label = $P2Panel/NameLabel
-@onready var status1: Label = $P1Panel/StatusLabel
-@onready var status2: Label = $P2Panel/StatusLabel
+@onready var panels_row: HBoxContainer = $PanelsRow
 @onready var hint: Label = $Hint
 
+var indices: Array[int] = []
+var ready_flags: Array[bool] = []
+var panel_refs: Array[Dictionary] = []
+
 func _ready() -> void:
-	index2 = min(1, GameSettings.default_skins.size() - 1)
+	var count: int = GameSettings.player_count
+	indices.resize(count)
+	ready_flags.resize(count)
+	for i in range(count):
+		indices[i] = i % GameSettings.default_skins.size()
+		ready_flags[i] = false
+	_build_panels()
 	_refresh()
 
-func _cycle(current: int, other: int, delta: int) -> int:
+func _build_panels() -> void:
+	for child in panels_row.get_children():
+		child.queue_free()
+	panel_refs.clear()
+
+	for i in range(GameSettings.player_count):
+		var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[i]
+
+		var panel := VBoxContainer.new()
+		panel.custom_minimum_size = Vector2(220, 0)
+		panel.add_theme_constant_override("separation", 12)
+		panels_row.add_child(panel)
+
+		var name_label := Label.new()
+		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name_label.add_theme_font_size_override("font_size", 20)
+		panel.add_child(name_label)
+
+		var swatch_wrap := CenterContainer.new()
+		panel.add_child(swatch_wrap)
+		var swatch := ColorRect.new()
+		swatch.custom_minimum_size = Vector2(100, 140)
+		swatch_wrap.add_child(swatch)
+
+		var status_label := Label.new()
+		status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		status_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+		status_label.custom_minimum_size = Vector2(220, 50)
+		panel.add_child(status_label)
+
+		panel_refs.append({
+			"cfg": cfg,
+			"name_label": name_label,
+			"swatch": swatch,
+			"status_label": status_label,
+		})
+
+func _cycle(current: int, taken: Array[int], delta: int) -> int:
 	var count := GameSettings.default_skins.size()
-	var next := (current + delta + count) % count
-	if next == other:
+	var next := current
+	for _n in range(count):
 		next = (next + delta + count) % count
+		if not taken.has(next):
+			break
 	return next
 
 func _refresh() -> void:
-	swatch1.color = GameSettings.default_skins[index1]
-	swatch2.color = GameSettings.default_skins[index2]
-	name1.text = SKIN_NAMES[index1]
-	name2.text = SKIN_NAMES[index2]
-	status1.text = "READY!" if ready1 else "A / D to change, W to lock in"
-	status2.text = "READY!" if ready2 else "Left / Right to change, Up to lock in"
-	hint.text = "Starting..." if (ready1 and ready2) else "Choose your car color"
+	var all_ready := true
+	for i in range(panel_refs.size()):
+		var ref: Dictionary = panel_refs[i]
+		ref["swatch"].color = GameSettings.default_skins[indices[i]]
+		ref["name_label"].text = SKIN_NAMES[indices[i]]
+		var cfg: Dictionary = ref["cfg"]
+		if ready_flags[i]:
+			ref["status_label"].text = "READY!"
+		else:
+			ref["status_label"].text = "%s to change, %s to lock in" % [cfg["steer_label"], cfg["confirm_label"]]
+			all_ready = false
+	hint.text = "Starting..." if all_ready else "Choose your car color"
+
+	if all_ready:
+		var chosen: Array[Color] = []
+		for idx in indices:
+			chosen.append(GameSettings.default_skins[idx])
+		GameSettings.skins = chosen
+		await get_tree().create_timer(0.4).timeout
+		get_tree().change_scene_to_file("res://scenes/Main.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return
 	var key: int = event.keycode
+	var changed := false
 
-	if not ready1:
-		if key == KEY_A:
-			index1 = _cycle(index1, index2, -1)
-		elif key == KEY_D:
-			index1 = _cycle(index1, index2, 1)
-		elif key == KEY_W:
-			ready1 = true
+	for i in range(panel_refs.size()):
+		if ready_flags[i]:
+			continue
+		var cfg: Dictionary = panel_refs[i]["cfg"]
+		var taken: Array[int] = []
+		for j in range(indices.size()):
+			if j != i:
+				taken.append(indices[j])
 
-	if not ready2:
-		if key == KEY_LEFT:
-			index2 = _cycle(index2, index1, -1)
-		elif key == KEY_RIGHT:
-			index2 = _cycle(index2, index1, 1)
-		elif key == KEY_UP:
-			ready2 = true
+		if key == cfg["left"]:
+			indices[i] = _cycle(indices[i], taken, -1)
+			changed = true
+		elif key == cfg["right"]:
+			indices[i] = _cycle(indices[i], taken, 1)
+			changed = true
+		elif key == cfg["confirm"]:
+			ready_flags[i] = true
+			changed = true
 
-	_refresh()
-
-	if ready1 and ready2:
-		GameSettings.skins = [GameSettings.default_skins[index1], GameSettings.default_skins[index2]]
-		await get_tree().create_timer(0.4).timeout
-		get_tree().change_scene_to_file("res://scenes/Main.tscn")
+	if changed:
+		_refresh()

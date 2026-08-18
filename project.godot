@@ -20,7 +20,7 @@ GameSettings="*res://scripts/GameSettings.gd"
 
 [display]
 
-window/size/viewport_width=1280
+window/size/viewport_width=1500
 window/size/viewport_height=800
 window/stretch/mode="canvas_items"
 

@@ -1,9 +1,9 @@
 extends Node2D
 
 const BOARD_GAP := 8.0
+const PLAYER_BOARD_SCENE := preload("res://scenes/PlayerBoard.tscn")
 
-@onready var board1: PlayerBoard = $BoardsContainer/PlayerBoard1
-@onready var board2: PlayerBoard = $BoardsContainer/PlayerBoard2
+@onready var boards_container: Node2D = $BoardsContainer
 @onready var status_label: Label = $HUD/StatusLabel
 @onready var overlay: Control = $HUD/Overlay
 @onready var overlay_title: Label = $HUD/Overlay/OverlayTitle
@@ -13,25 +13,46 @@ var boards: Array[PlayerBoard] = []
 var state := "playing"
 
 func _ready() -> void:
-	var skins := GameSettings.skins
-
-	board1.player_name = "P1"
-	board1.key_left = KEY_A
-	board1.key_right = KEY_D
-	board1.body_color = skins[0] if skins.size() > 0 else Color(0.231, 0.435, 0.878)
-
-	board2.position.x = board1.board_width + BOARD_GAP
-	board2.player_name = "P2"
-	board2.key_left = KEY_LEFT
-	board2.key_right = KEY_RIGHT
-	board2.body_color = skins[1] if skins.size() > 1 else Color(0.878, 0.278, 0.231)
-
-	boards = [board1, board2]
-	for b in boards:
-		b.crashed.connect(_on_board_crashed)
-
-	status_label.text = "P1: A / D      P2: Left / Right      ESC: menu"
+	_build_boards()
+	status_label.text = _status_text()
 	_start_round()
+
+func _build_boards() -> void:
+	for child in boards_container.get_children():
+		child.queue_free()
+	boards = []
+
+	var count: int = GameSettings.player_count
+	var board_width := 0.0
+
+	for i in range(count):
+		var board: PlayerBoard = PLAYER_BOARD_SCENE.instantiate()
+		var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[i]
+		board.player_name = cfg["name"]
+		board.key_left = cfg["left"]
+		board.key_right = cfg["right"]
+		board.body_color = GameSettings.skins[i] if i < GameSettings.skins.size() else Color.WHITE
+		boards_container.add_child(board)
+		board.crashed.connect(_on_board_crashed)
+		boards.append(board)
+		board_width = board.board_width
+
+	var total_width: float = count * board_width + (count - 1) * BOARD_GAP
+	var viewport_width: float = get_viewport().get_visible_rect().size.x
+	var start_x: float = max(0.0, (viewport_width - total_width) / 2.0)
+
+	var x := start_x
+	for board in boards:
+		board.position.x = x
+		x += board.board_width + BOARD_GAP
+
+func _status_text() -> String:
+	var parts: Array[String] = []
+	for i in range(boards.size()):
+		var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[i]
+		parts.append("%s: %s" % [cfg["name"], cfg["steer_label"]])
+	parts.append("ESC: menu")
+	return "      ".join(parts)
 
 func _start_round() -> void:
 	state = "playing"

@@ -8,14 +8,20 @@ Built in **Godot 4**.
 
 **Don't Crash** — steer between lanes, avoid traffic, survive as long as possible. Speed ramps up over time. Whoever covers the most distance before crashing wins the round.
 
+## Playing it
+
+Launch the game and you'll get: **Play** → pick 2, 3, or 4 players → each player cycles and locks in a car color → race starts. Each board always has 5 lanes, regardless of player count.
+
 ## Controls
 
-| Player | Left | Right |
-| ------ | ---- | ----- |
-| P1     | A    | D     |
-| P2     | ←    | →     |
+| Player | Left | Right | Confirm (skin select) |
+| ------ | ---- | ----- | ---------------------- |
+| P1     | A    | D     | W                       |
+| P2     | ←    | →     | ↑                       |
+| P3     | F    | H     | T                       |
+| P4     | J    | L     | I                       |
 
-Press **Enter** to restart after a round ends.
+Press **Enter** to restart after a round ends. Press **Esc** during a round to return to the main menu.
 
 ## Running it
 
@@ -30,20 +36,26 @@ Every car (`scenes/Car.tscn`) has an empty `Sprite2D` child. Open it in the edit
 ```
 project.godot
 scenes/
-  Main.tscn         two PlayerBoards side by side, round state, restart UI
-  PlayerBoard.tscn   one player's road + car + obstacle spawner
-  Car.tscn          sprite/placeholder + collision, reused for player and traffic
+  MainMenu.tscn       title screen, Play button
+  PlayerSelect.tscn    choose 2/3/4 players
+  SkinSelect.tscn      each player picks + locks in a car color
+  Main.tscn            N PlayerBoards side by side, round state, restart UI
+  PlayerBoard.tscn     one player's road + car + obstacle spawner
+  Car.tscn             sprite/placeholder + collision, reused for player and traffic
 scripts/
-  Main.gd
-  PlayerBoard.gd     steering physics, spawning, scoring, collision handling
-  Road.gd            lane math and road/dash rendering
-  Car.gd             swaps between placeholder shape and an assigned texture
+  GameSettings.gd      autoload: player count, chosen skins, per-player key bindings
+  MainMenu.gd
+  PlayerSelect.gd
+  SkinSelect.gd        dynamic per-player color-pick panels, duplicate-color avoidance
+  Main.gd              instantiates PlayerBoards for the chosen player count, centers them
+  PlayerBoard.gd        steering physics, spawning, scoring, collision handling
+  Road.gd               lane math and road/dash rendering
+  Car.gd                 swaps between placeholder shape and an assigned texture
 ```
 
 ## Roadmap
 
 - Drop in real sprites for cars and road (see "Adding your own art" above)
 - More competitive mini-modes beyond "don't crash" (time attack, reverse traffic, narrowing lanes, item pickups, etc.)
-- More players (3-4 way split-screen)
 - Gamepad support
 - Export to web (HTML5) and/or desktop builds
