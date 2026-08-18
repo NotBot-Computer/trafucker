@@ -17,63 +17,77 @@ const PLAYER_SKINS: Array[Dictionary] = [
 var skins: Array[Texture2D] = [PLAYER_SKINS[0]["texture"], PLAYER_SKINS[1]["texture"]]
 
 # Traffic vehicle kinds. width_frac is a fraction of lane width; height is
-# width * height_frac. weight controls how often a kind is picked relative
-# to the others (see PlayerBoard._pick_traffic_kind).
+# width * height_frac (matched to each kind's real sprite aspect ratio so
+# nothing looks stretched). weight controls how often a kind is picked
+# relative to the others (see PlayerBoard._pick_traffic_kind).
 const TRAFFIC_KINDS: Array[Dictionary] = [
 	{
-		"kind": "sedan", "width_frac": 0.62, "height_frac": 1.7, "weight": 34,
+		"kind": "sedan", "width_frac": 0.62, "height_frac": 1.69, "weight": 30,
 		"textures": [
-			preload("res://sprites/cars/sedan_white.png"),
-			preload("res://sprites/cars/sedan_black.png"),
 			preload("res://sprites/cars/sedan_silver.png"),
-			preload("res://sprites/cars/sedan_slate.png"),
-			preload("res://sprites/cars/sedan_tan.png"),
-			preload("res://sprites/cars/sedan_maroon.png"),
+			preload("res://sprites/cars/sedan_brown.png"),
+			preload("res://sprites/cars/sedan_sage.png"),
+			preload("res://sprites/cars/sedan_darkbrown.png"),
+			preload("res://sprites/cars/sedan_teal.png"),
+			preload("res://sprites/cars/sedan_cream.png"),
 		],
 	},
 	{
-		"kind": "suv", "width_frac": 0.68, "height_frac": 1.8, "weight": 20,
+		"kind": "suv", "width_frac": 0.68, "height_frac": 1.79, "weight": 18,
 		"textures": [
-			preload("res://sprites/cars/suv_tan.png"),
-			preload("res://sprites/cars/suv_gray.png"),
+			preload("res://sprites/cars/suv_gold.png"),
+			preload("res://sprites/cars/suv_silver.png"),
 			preload("res://sprites/cars/suv_blue.png"),
+			preload("res://sprites/cars/suv_olive.png"),
 			preload("res://sprites/cars/suv_white.png"),
+			preload("res://sprites/cars/suv_gray.png"),
 		],
 	},
 	{
-		"kind": "pickup", "width_frac": 0.62, "height_frac": 1.95, "weight": 14,
+		"kind": "pickup", "width_frac": 0.62, "height_frac": 1.52, "weight": 14,
 		"textures": [
 			preload("res://sprites/cars/pickup_red.png"),
-			preload("res://sprites/cars/pickup_olive.png"),
+			preload("res://sprites/cars/pickup_green.png"),
+			preload("res://sprites/cars/pickup_olivedark.png"),
+			preload("res://sprites/cars/pickup_blue.png"),
+			preload("res://sprites/cars/pickup_bluedark.png"),
+			preload("res://sprites/cars/pickup_brown.png"),
 			preload("res://sprites/cars/pickup_teal.png"),
-			preload("res://sprites/cars/pickup_white.png"),
+			preload("res://sprites/cars/pickup_olive.png"),
 		],
 	},
 	{
-		"kind": "van", "width_frac": 0.58, "height_frac": 2.2, "weight": 10,
+		"kind": "van", "width_frac": 0.58, "height_frac": 1.55, "weight": 12,
 		"textures": [
-			preload("res://sprites/cars/van_white.png"),
 			preload("res://sprites/cars/van_blue.png"),
+			preload("res://sprites/cars/van_white.png"),
+			preload("res://sprites/cars/van_silver.png"),
+			preload("res://sprites/cars/van_lavender.png"),
+			preload("res://sprites/cars/van_cyan.png"),
 			preload("res://sprites/cars/van_red.png"),
+			preload("res://sprites/cars/van_cream_box.png"),
+			preload("res://sprites/cars/van_navy_box.png"),
+			preload("res://sprites/cars/van_darkgray_box.png"),
 		],
 	},
 	{
-		"kind": "truck", "width_frac": 0.56, "height_frac": 2.6, "weight": 10,
+		"kind": "truck", "width_frac": 0.66, "height_frac": 4.34, "weight": 8,
 		"textures": [
+			preload("res://sprites/cars/truck_blue.png"),
+			preload("res://sprites/cars/truck_red.png"),
 			preload("res://sprites/cars/truck_white.png"),
-			preload("res://sprites/cars/truck_tan.png"),
-			preload("res://sprites/cars/truck_bluegray.png"),
+			preload("res://sprites/cars/truck_black.png"),
 		],
 	},
 	{
-		"kind": "bus", "width_frac": 0.60, "height_frac": 3.0, "weight": 6,
+		"kind": "bus", "width_frac": 0.60, "height_frac": 2.43, "weight": 6,
 		"textures": [
 			preload("res://sprites/cars/bus_transit.png"),
 			preload("res://sprites/cars/bus_coach.png"),
 		],
 	},
 	{
-		"kind": "motorcycle", "width_frac": 0.30, "height_frac": 2.05, "weight": 6,
+		"kind": "motorcycle", "width_frac": 0.30, "height_frac": 2.07, "weight": 6,
 		"textures": [
 			preload("res://sprites/cars/moto_red.png"),
 			preload("res://sprites/cars/moto_maroon.png"),

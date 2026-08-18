@@ -27,7 +27,7 @@ const MAX_TILT := 0.32
 @onready var obstacle_container: Node2D = $ObstacleContainer
 @onready var player_car: Car = $PlayerCar
 
-const PLAYER_KIND := {"width_frac": 0.62, "height_frac": 1.7}
+const PLAYER_KIND := {"width_frac": 0.62, "height_frac": 1.69}
 
 var car_x: float
 var car_vx: float = 0.0

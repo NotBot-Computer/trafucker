@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dc4t2iwj6mgm2"
-path="res://.godot/imported/sedan_black.png-b86d58d271271b0e383e93945c2b372c.ctex"
+uid="uid://bjueprpjo8rgl"
+path="res://.godot/imported/van_lavender.png-a95b44d1a2cbf37166efe395a4555be9.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://sprites/cars/sedan_black.png"
-dest_files=["res://.godot/imported/sedan_black.png-b86d58d271271b0e383e93945c2b372c.ctex"]
+source_file="res://sprites/cars/van_lavender.png"
+dest_files=["res://.godot/imported/van_lavender.png-a95b44d1a2cbf37166efe395a4555be9.ctex"]
 
 [params]
 

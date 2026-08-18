@@ -29,7 +29,7 @@ Open the project folder in the Godot 4 editor (`godot --path .` from this direct
 
 ## Car art
 
-Cars are real sprites (`sprites/cars/*.png`) — top-down orthographic pixel art across 7 vehicle kinds: sedans (12 colors: 6 selectable player skins + 6 traffic-only), SUVs, pickups, vans, trucks, buses, and motorcycles. `GameSettings.TRAFFIC_KINDS` holds each kind's textures, size ratios, and spawn weight (sedans most common, buses/motorcycles rarest); `PlayerBoard.gd` picks a weighted-random kind and texture for every spawned traffic `Car`.
+Cars are real sprites (`sprites/cars/*.png`) — top-down orthographic pixel art across 7 vehicle kinds: sedans (12 colors: 6 selectable player skins + 6 traffic-only), SUVs, pickups, vans, trucks, buses, and motorcycles. Most were cropped and cleaned up from a hand-drawn top-down vehicle reference sheet; motorcycles are code-generated since the reference's motorcycles were drawn front-on rather than top-down. `GameSettings.TRAFFIC_KINDS` holds each kind's textures, size ratios, and spawn weight (sedans most common, buses/motorcycles rarest); `PlayerBoard.gd` picks a weighted-random kind and texture for every spawned traffic `Car`.
 
 Every `Car` (`scenes/Car.tscn`) has an empty `Sprite2D` child, so you can swap in your own art any time: open it in the editor and drag a PNG onto the Sprite2D's **Texture** property in the Inspector, or call `set_texture()` from code (see `PlayerBoard.gd` for examples). The placeholder shape (a colored `Polygon2D`) automatically hides once a texture is assigned. `Car.gd` scales whatever texture is provided to the car's collision size.
 

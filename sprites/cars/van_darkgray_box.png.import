@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d2l4uomsc1ck5"
-path="res://.godot/imported/truck_bluegray.png-1a9f9627bfe0f7b1edf5f4ec0dfb56d4.ctex"
+uid="uid://cfxgjmeo8jwob"
+path="res://.godot/imported/van_darkgray_box.png-900ef2b697d331689d6dcce1505aeae7.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://sprites/cars/truck_bluegray.png"
-dest_files=["res://.godot/imported/truck_bluegray.png-1a9f9627bfe0f7b1edf5f4ec0dfb56d4.ctex"]
+source_file="res://sprites/cars/van_darkgray_box.png"
+dest_files=["res://.godot/imported/van_darkgray_box.png-900ef2b697d331689d6dcce1505aeae7.ctex"]
 
 [params]
 

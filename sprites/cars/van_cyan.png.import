@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dioskmliufs62"
-path="res://.godot/imported/sedan_tan.png-8aec067c9d5d3f6baf7507964d5231f5.ctex"
+uid="uid://8temvd4bc5uu"
+path="res://.godot/imported/van_cyan.png-a478d55ec2b133a68355716f8cb4214d.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://sprites/cars/sedan_tan.png"
-dest_files=["res://.godot/imported/sedan_tan.png-8aec067c9d5d3f6baf7507964d5231f5.ctex"]
+source_file="res://sprites/cars/van_cyan.png"
+dest_files=["res://.godot/imported/van_cyan.png-a478d55ec2b133a68355716f8cb4214d.ctex"]
 
 [params]
 

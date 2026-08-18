@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://csdm4vmfy1vcb"
-path="res://.godot/imported/sedan_white.png-96898a1a1316f5e4beedcb353558f639.ctex"
+uid="uid://drnpjn0u58vyk"
+path="res://.godot/imported/suv_olive.png-eede60274dac4767f3b412e638845ba8.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://sprites/cars/sedan_white.png"
-dest_files=["res://.godot/imported/sedan_white.png-96898a1a1316f5e4beedcb353558f639.ctex"]
+source_file="res://sprites/cars/suv_olive.png"
+dest_files=["res://.godot/imported/suv_olive.png-eede60274dac4767f3b412e638845ba8.ctex"]
 
 [params]
 

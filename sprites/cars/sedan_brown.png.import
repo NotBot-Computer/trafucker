@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://jtp50i11cslk"
-path="res://.godot/imported/sedan_maroon.png-a5581a82ee49071467e043d9370e05a1.ctex"
+uid="uid://bvmma121rpioc"
+path="res://.godot/imported/sedan_brown.png-31e4e4954438776cc30382bd66a0f0bc.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://sprites/cars/sedan_maroon.png"
-dest_files=["res://.godot/imported/sedan_maroon.png-a5581a82ee49071467e043d9370e05a1.ctex"]
+source_file="res://sprites/cars/sedan_brown.png"
+dest_files=["res://.godot/imported/sedan_brown.png-31e4e4954438776cc30382bd66a0f0bc.ctex"]
 
 [params]
 

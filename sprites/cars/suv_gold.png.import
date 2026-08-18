@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dffj3lbe38byj"
-path="res://.godot/imported/suv_tan.png-fe5104c442d344a72f04f8eca8c9c801.ctex"
+uid="uid://bllr18q3k5sxv"
+path="res://.godot/imported/suv_gold.png-1ccd2b861128f53103b3e907ccabaf21.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://sprites/cars/suv_tan.png"
-dest_files=["res://.godot/imported/suv_tan.png-fe5104c442d344a72f04f8eca8c9c801.ctex"]
+source_file="res://sprites/cars/suv_gold.png"
+dest_files=["res://.godot/imported/suv_gold.png-1ccd2b861128f53103b3e907ccabaf21.ctex"]
 
 [params]
 

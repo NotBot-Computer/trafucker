@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bxywbxvqa2ocm"
-path="res://.godot/imported/sedan_slate.png-16596253e0f079585beaa6865f787dec.ctex"
+uid="uid://cqqrpasv5yy1u"
+path="res://.godot/imported/truck_red.png-145bf5c47396c8f0e5fd6dc0212eda25.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://sprites/cars/sedan_slate.png"
-dest_files=["res://.godot/imported/sedan_slate.png-16596253e0f079585beaa6865f787dec.ctex"]
+source_file="res://sprites/cars/truck_red.png"
+dest_files=["res://.godot/imported/truck_red.png-145bf5c47396c8f0e5fd6dc0212eda25.ctex"]
 
 [params]
 
