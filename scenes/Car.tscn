@@ -1,14 +1,14 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://i41q6qy287v"]
 
-[ext_resource type="Script" path="res://scripts/Car.gd" id="1_car"]
+[ext_resource type="Script" uid="uid://ylyy7cghb22b" path="res://scripts/Car.gd" id="1_car"]
 
-[node name="Car" type="Area2D"]
+[node name="Car" type="Area2D" unique_id=1670223062]
 script = ExtResource("1_car")
 
-[node name="Body" type="Polygon2D" parent="."]
+[node name="Body" type="Polygon2D" parent="." unique_id=1724107549]
 
-[node name="Windshield" type="Polygon2D" parent="."]
+[node name="Windshield" type="Polygon2D" parent="." unique_id=1336818745]
 
-[node name="Sprite2D" type="Sprite2D" parent="."]
+[node name="Sprite2D" type="Sprite2D" parent="." unique_id=657024293]
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=457892614]

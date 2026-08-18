@@ -1,7 +1,5 @@
 extends Control
 
-const SKIN_NAMES := ["Blue", "Red", "Green", "Yellow", "Purple", "Orange"]
-
 @onready var panels_row: HBoxContainer = $PanelsRow
 @onready var hint: Label = $Hint
 
@@ -14,7 +12,7 @@ func _ready() -> void:
 	indices.resize(count)
 	ready_flags.resize(count)
 	for i in range(count):
-		indices[i] = i % GameSettings.default_skins.size()
+		indices[i] = i % GameSettings.PLAYER_SKINS.size()
 		ready_flags[i] = false
 	_build_panels()
 	_refresh()
@@ -39,8 +37,10 @@ func _build_panels() -> void:
 
 		var swatch_wrap := CenterContainer.new()
 		panel.add_child(swatch_wrap)
-		var swatch := ColorRect.new()
-		swatch.custom_minimum_size = Vector2(100, 140)
+		var swatch := TextureRect.new()
+		swatch.custom_minimum_size = Vector2(100, 175)
+		swatch.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		swatch.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		swatch_wrap.add_child(swatch)
 
 		var status_label := Label.new()
@@ -57,7 +57,7 @@ func _build_panels() -> void:
 		})
 
 func _cycle(current: int, taken: Array[int], delta: int) -> int:
-	var count := GameSettings.default_skins.size()
+	var count := GameSettings.PLAYER_SKINS.size()
 	var next := current
 	for _n in range(count):
 		next = (next + delta + count) % count
@@ -69,8 +69,9 @@ func _refresh() -> void:
 	var all_ready := true
 	for i in range(panel_refs.size()):
 		var ref: Dictionary = panel_refs[i]
-		ref["swatch"].color = GameSettings.default_skins[indices[i]]
-		ref["name_label"].text = SKIN_NAMES[indices[i]]
+		var skin: Dictionary = GameSettings.PLAYER_SKINS[indices[i]]
+		ref["swatch"].texture = skin["texture"]
+		ref["name_label"].text = skin["name"]
 		var cfg: Dictionary = ref["cfg"]
 		if ready_flags[i]:
 			ref["status_label"].text = "READY!"
@@ -80,9 +81,9 @@ func _refresh() -> void:
 	hint.text = "Starting..." if all_ready else "Choose your car color"
 
 	if all_ready:
-		var chosen: Array[Color] = []
+		var chosen: Array[Texture2D] = []
 		for idx in indices:
-			chosen.append(GameSettings.default_skins[idx])
+			chosen.append(GameSettings.PLAYER_SKINS[idx]["texture"])
 		GameSettings.skins = chosen
 		await get_tree().create_timer(0.4).timeout
 		get_tree().change_scene_to_file("res://scenes/Main.tscn")

@@ -8,11 +8,12 @@ const CAR_SCENE := preload("res://scenes/Car.tscn")
 @export var board_width: float = 360.0
 @export var board_height: float = 620.0
 @export var lane_count: int = 5
-@export var body_color: Color = Color(0.231, 0.435, 0.878)
-@export var window_color: Color = Color(0.55, 0.65, 0.7)
+@export var body_color: Color = Color(0.231, 0.435, 0.878) # fallback if player_texture is null
 @export var key_left: Key = KEY_A
 @export var key_right: Key = KEY_D
 @export var player_name: String = "P1"
+
+var player_texture: Texture2D = null
 
 const BASE_SPEED := 160.0
 const SPEED_PER_SECOND := 6.0
@@ -21,14 +22,6 @@ const SPAWN_INTERVAL_MIN := 0.35
 const MAX_STEER_SPEED := 460.0
 const STEER_RESPONSE := 9.0
 const MAX_TILT := 0.32
-
-const SEDAN_COLORS := [
-	Color(0.914, 0.914, 0.914), Color(0.169, 0.169, 0.169), Color(0.780, 0.800, 0.820),
-	Color(0.365, 0.427, 0.494), Color(0.788, 0.651, 0.420), Color(0.478, 0.180, 0.180),
-]
-const TRUCK_COLORS := [
-	Color(0.933, 0.933, 0.933), Color(0.847, 0.827, 0.769), Color(0.812, 0.839, 0.863),
-]
 
 @onready var road: Road = $Road
 @onready var obstacle_container: Node2D = $ObstacleContainer
@@ -53,9 +46,10 @@ func start_round() -> void:
 		child.queue_free()
 
 	player_car.body_color = body_color
-	player_car.window_color = window_color
 	var sz := _car_size(false)
 	player_car.set_size(sz.x, sz.y)
+	if player_texture != null:
+		player_car.set_texture(player_texture)
 	player_car.rotation = 0.0
 	player_car.modulate.a = 1.0
 
@@ -147,17 +141,18 @@ func _spawn_obstacle() -> void:
 	var is_truck := randf() < 0.25
 	var obstacle: Car = CAR_SCENE.instantiate()
 	obstacle_container.add_child(obstacle)
-	obstacle.body_color = _random_color(is_truck)
-	obstacle.window_color = Color(0.55, 0.65, 0.7)
 	var sz := _car_size(is_truck)
 	obstacle.set_size(sz.x, sz.y)
+	obstacle.set_texture(_random_traffic_texture(is_truck))
 	obstacle.set_meta("lane", lane)
 	obstacle.position = Vector2(road.lane_center_x(lane), -sz.y - 40.0)
 
-func _random_color(is_truck: bool) -> Color:
+func _random_traffic_texture(is_truck: bool) -> Texture2D:
 	if is_truck:
-		return TRUCK_COLORS[randi() % TRUCK_COLORS.size()]
-	return SEDAN_COLORS[randi() % SEDAN_COLORS.size()]
+		var trucks := GameSettings.TRAFFIC_TRUCK_TEXTURES
+		return trucks[randi() % trucks.size()]
+	var sedans := GameSettings.TRAFFIC_SEDAN_TEXTURES
+	return sedans[randi() % sedans.size()]
 
 func _on_player_area_entered(_area: Area2D) -> void:
 	if not alive:

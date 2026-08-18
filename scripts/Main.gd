@@ -38,7 +38,8 @@ func _build_boards() -> void:
 		board.player_name = cfg["name"]
 		board.key_left = cfg["left"]
 		board.key_right = cfg["right"]
-		board.body_color = GameSettings.skins[i] if i < GameSettings.skins.size() else Color.WHITE
+		if i < GameSettings.skins.size():
+			board.player_texture = GameSettings.skins[i]
 		boards_container.add_child(board)
 		board.crashed.connect(_on_board_crashed)
 		boards.append(board)
