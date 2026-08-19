@@ -30,6 +30,7 @@ const DASH_COOLDOWN := 0.18
 const DASH_TILT := 0.55
 const DASH_GHOST_INTERVAL := 0.03
 
+const REVERSAL_THRESHOLD := 140.0 # |car_vx| needed before an opposite key-press counts as a drift
 const DRIFT_COOLDOWN := 0.3
 const DRIFT_GRIP_MULT := 0.22 # car_vx (actual momentum) approaches target this much slower
 const DRIFT_NOSE_RESPONSE := 14.0 # how fast the car's facing/tilt snaps to the input direction
@@ -109,20 +110,21 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return
 	if event.keycode == key_left:
+		if car_vx > REVERSAL_THRESHOLD:
+			_try_start_drift()
 		_register_tap(-1)
 	elif event.keycode == key_right:
+		if car_vx < -REVERSAL_THRESHOLD:
+			_try_start_drift()
 		_register_tap(1)
 
 func _register_tap(direction: int) -> void:
-	if elapsed - last_tap_time <= TAP_WINDOW:
-		if direction == last_tap_direction:
-			_try_start_dash(direction)
-			last_tap_time = -999.0
-			return
-		else:
-			_try_start_drift()
-			last_tap_time = -999.0
-			return
+	# Same-direction double-tap triggers a dash. Drift is triggered
+	# separately, straight off the car's actual momentum (see above).
+	if direction == last_tap_direction and elapsed - last_tap_time <= TAP_WINDOW:
+		_try_start_dash(direction)
+		last_tap_time = -999.0
+		return
 	last_tap_time = elapsed
 	last_tap_direction = direction
 
