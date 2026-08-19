@@ -32,9 +32,9 @@ const DASH_GHOST_INTERVAL := 0.03
 
 const REVERSAL_THRESHOLD := 140.0 # |car_vx| needed before an opposite key-press counts as a drift
 const DRIFT_COOLDOWN := 0.3
-const DRIFT_GRIP_MULT := 0.22 # car_vx (actual momentum) approaches target this much slower
+const DRIFT_GRIP_MULT := 0.48 # car_vx (actual momentum) approaches target this much slower
 const DRIFT_NOSE_RESPONSE := 14.0 # how fast the car's facing/tilt snaps to the input direction
-const DRIFT_MAX_TILT := 0.68 # nose can point much further off than normal steering
+const DRIFT_MAX_TILT := 0.46 # nose can point further off than normal steering, but not extreme
 const SLIP_MARK_THRESHOLD := 90.0 # |target_vx - car_vx| above this counts as "sliding"
 const DRIFT_MARK_INTERVAL := 0.05
 const DRIFT_MARK_OFFSET := 0.22 # fraction of car width, rear-wheel track spacing
