@@ -23,6 +23,12 @@ const MAX_STEER_SPEED := 460.0
 const STEER_RESPONSE := 9.0
 const MAX_TILT := 0.32
 
+const DASH_TAP_WINDOW := 0.28 # max gap between taps to count as a double-tap
+const DASH_DURATION := 0.14
+const DASH_COOLDOWN := 0.18
+const DASH_TILT := 0.55
+const DASH_GHOST_INTERVAL := 0.03
+
 @onready var road: Road = $Road
 @onready var obstacle_container: Node2D = $ObstacleContainer
 @onready var player_car: Car = $PlayerCar
@@ -36,6 +42,16 @@ var distance: float = 0.0
 var spawn_timer: float = 0.0
 var alive: bool = true
 var active: bool = false
+
+var last_tap_time: float = -999.0
+var last_tap_direction: int = 0
+var is_dashing: bool = false
+var dash_timer: float = 0.0
+var dash_from: float = 0.0
+var dash_to: float = 0.0
+var dash_direction: int = 0
+var dash_cooldown_timer: float = 0.0
+var dash_ghost_timer: float = 0.0
 
 func _ready() -> void:
 	road.width = board_width
@@ -62,9 +78,46 @@ func start_round() -> void:
 	spawn_timer = spawn_interval()
 	alive = true
 	active = true
+	last_tap_time = -999.0
+	last_tap_direction = 0
+	is_dashing = false
+	dash_cooldown_timer = 0.0
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
 	road.distance = 0.0
 	road.queue_redraw()
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not active or not alive or is_dashing:
+		return
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	if event.keycode == key_left:
+		_register_tap(-1)
+	elif event.keycode == key_right:
+		_register_tap(1)
+
+func _register_tap(direction: int) -> void:
+	if direction == last_tap_direction and elapsed - last_tap_time <= DASH_TAP_WINDOW:
+		_try_start_dash(direction)
+		last_tap_time = -999.0
+	else:
+		last_tap_time = elapsed
+		last_tap_direction = direction
+
+func _try_start_dash(direction: int) -> void:
+	if is_dashing or dash_cooldown_timer > 0.0:
+		return
+	var sz := _car_size(PLAYER_KIND)
+	var shoulder := board_width * 0.06
+	var min_x := shoulder + sz.x * 0.5
+	var max_x := board_width - shoulder - sz.x * 0.5
+	dash_from = car_x
+	dash_to = clamp(car_x + direction * road.lane_width(), min_x, max_x)
+	dash_direction = direction
+	dash_timer = 0.0
+	dash_ghost_timer = 0.0
+	is_dashing = true
+	car_vx = 0.0
 
 func _car_size(kind_cfg: Dictionary) -> Vector2:
 	var lw := road.lane_width()
@@ -81,31 +134,53 @@ func _process(delta: float) -> void:
 	if not active or not alive:
 		return
 
-	var left := Input.is_physical_key_pressed(key_left)
-	var right := Input.is_physical_key_pressed(key_right)
-	var target_vx := 0.0
-	if left and not right:
-		target_vx = -MAX_STEER_SPEED
-	elif right and not left:
-		target_vx = MAX_STEER_SPEED
-	var approach := 1.0 - exp(-STEER_RESPONSE * delta)
-	car_vx += (target_vx - car_vx) * approach
+	if dash_cooldown_timer > 0.0:
+		dash_cooldown_timer -= delta
 
 	var sz := _car_size(PLAYER_KIND)
-	var shoulder := board_width * 0.06
-	var min_x := shoulder + sz.x * 0.5
-	var max_x := board_width - shoulder - sz.x * 0.5
-	var next_x := car_x + car_vx * delta
-	if next_x < min_x:
-		car_x = min_x
-		car_vx = 0.0
-	elif next_x > max_x:
-		car_x = max_x
-		car_vx = 0.0
-	else:
-		car_x = next_x
+	var tilt: float
 
-	var tilt: float = clamp(car_vx / MAX_STEER_SPEED, -1.0, 1.0) * MAX_TILT
+	if is_dashing:
+		dash_timer += delta
+		var t: float = clamp(dash_timer / DASH_DURATION, 0.0, 1.0)
+		var eased: float = 1.0 - pow(1.0 - t, 3)
+		car_x = lerp(dash_from, dash_to, eased)
+		tilt = DASH_TILT * dash_direction * (1.0 - t)
+
+		dash_ghost_timer -= delta
+		if dash_ghost_timer <= 0.0:
+			dash_ghost_timer = DASH_GHOST_INTERVAL
+			_spawn_dash_ghost()
+
+		if t >= 1.0:
+			is_dashing = false
+			dash_cooldown_timer = DASH_COOLDOWN
+	else:
+		var left := Input.is_physical_key_pressed(key_left)
+		var right := Input.is_physical_key_pressed(key_right)
+		var target_vx := 0.0
+		if left and not right:
+			target_vx = -MAX_STEER_SPEED
+		elif right and not left:
+			target_vx = MAX_STEER_SPEED
+		var approach := 1.0 - exp(-STEER_RESPONSE * delta)
+		car_vx += (target_vx - car_vx) * approach
+
+		var shoulder := board_width * 0.06
+		var min_x := shoulder + sz.x * 0.5
+		var max_x := board_width - shoulder - sz.x * 0.5
+		var next_x := car_x + car_vx * delta
+		if next_x < min_x:
+			car_x = min_x
+			car_vx = 0.0
+		elif next_x > max_x:
+			car_x = max_x
+			car_vx = 0.0
+		else:
+			car_x = next_x
+
+		tilt = clamp(car_vx / MAX_STEER_SPEED, -1.0, 1.0) * MAX_TILT
+
 	player_car.rotation = tilt
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
 
@@ -123,6 +198,21 @@ func _process(delta: float) -> void:
 		child.position.y += current_speed() * delta
 		if child.position.y > board_height + 140.0:
 			child.queue_free()
+
+func _spawn_dash_ghost() -> void:
+	if player_car.sprite.texture == null:
+		return
+	var ghost := Sprite2D.new()
+	ghost.texture = player_car.sprite.texture
+	ghost.scale = player_car.sprite.scale
+	ghost.rotation = player_car.rotation
+	ghost.position = player_car.position
+	ghost.modulate = Color(1.0, 1.0, 1.0, 0.4)
+	ghost.z_index = -1
+	add_child(ghost)
+	var tw := create_tween()
+	tw.tween_property(ghost, "modulate:a", 0.0, 0.22)
+	tw.tween_callback(ghost.queue_free)
 
 func _spawn_obstacle() -> void:
 	var used_lanes: Array = []
