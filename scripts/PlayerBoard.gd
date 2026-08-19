@@ -23,11 +23,19 @@ const MAX_STEER_SPEED := 460.0
 const STEER_RESPONSE := 9.0
 const MAX_TILT := 0.32
 
-const DASH_TAP_WINDOW := 0.28 # max gap between taps to count as a double-tap
+const TAP_WINDOW := 0.28 # max gap between taps to count as back-to-back
+
 const DASH_DURATION := 0.14
 const DASH_COOLDOWN := 0.18
 const DASH_TILT := 0.55
 const DASH_GHOST_INTERVAL := 0.03
+
+const DRIFT_DURATION := 0.45 # how long the steering boost lasts
+const DRIFT_COOLDOWN := 0.25
+const DRIFT_STEER_MULT := 2.2 # how much faster car_vx approaches target while drifting
+const DRIFT_SPEED_MULT := 1.35 # how much higher the lateral top speed is while drifting
+const DRIFT_MAX_TILT := 0.5
+const DRIFT_MARK_INTERVAL := 0.045
 
 @onready var road: Road = $Road
 @onready var obstacle_container: Node2D = $ObstacleContainer
@@ -45,6 +53,7 @@ var active: bool = false
 
 var last_tap_time: float = -999.0
 var last_tap_direction: int = 0
+
 var is_dashing: bool = false
 var dash_timer: float = 0.0
 var dash_from: float = 0.0
@@ -52,6 +61,12 @@ var dash_to: float = 0.0
 var dash_direction: int = 0
 var dash_cooldown_timer: float = 0.0
 var dash_ghost_timer: float = 0.0
+
+var is_drifting: bool = false
+var drift_timer: float = 0.0
+var drift_cooldown_timer: float = 0.0
+var drift_mark_timer: float = 0.0
+var drift_marks: Array = []
 
 func _ready() -> void:
 	road.width = board_width
@@ -82,6 +97,8 @@ func start_round() -> void:
 	last_tap_direction = 0
 	is_dashing = false
 	dash_cooldown_timer = 0.0
+	is_drifting = false
+	drift_cooldown_timer = 0.0
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
 	road.distance = 0.0
 	road.queue_redraw()
@@ -97,15 +114,20 @@ func _unhandled_input(event: InputEvent) -> void:
 		_register_tap(1)
 
 func _register_tap(direction: int) -> void:
-	if direction == last_tap_direction and elapsed - last_tap_time <= DASH_TAP_WINDOW:
-		_try_start_dash(direction)
-		last_tap_time = -999.0
-	else:
-		last_tap_time = elapsed
-		last_tap_direction = direction
+	if elapsed - last_tap_time <= TAP_WINDOW:
+		if direction == last_tap_direction:
+			_try_start_dash(direction)
+			last_tap_time = -999.0
+			return
+		else:
+			_try_start_drift()
+			last_tap_time = -999.0
+			return
+	last_tap_time = elapsed
+	last_tap_direction = direction
 
 func _try_start_dash(direction: int) -> void:
-	if is_dashing or dash_cooldown_timer > 0.0:
+	if is_dashing or is_drifting or dash_cooldown_timer > 0.0:
 		return
 	var sz := _car_size(PLAYER_KIND)
 	var shoulder := board_width * 0.06
@@ -118,6 +140,13 @@ func _try_start_dash(direction: int) -> void:
 	dash_ghost_timer = 0.0
 	is_dashing = true
 	car_vx = 0.0
+
+func _try_start_drift() -> void:
+	if is_dashing or is_drifting or drift_cooldown_timer > 0.0:
+		return
+	is_drifting = true
+	drift_timer = 0.0
+	drift_mark_timer = 0.0
 
 func _car_size(kind_cfg: Dictionary) -> Vector2:
 	var lw := road.lane_width()
@@ -136,6 +165,8 @@ func _process(delta: float) -> void:
 
 	if dash_cooldown_timer > 0.0:
 		dash_cooldown_timer -= delta
+	if drift_cooldown_timer > 0.0:
+		drift_cooldown_timer -= delta
 
 	var sz := _car_size(PLAYER_KIND)
 	var tilt: float
@@ -156,14 +187,23 @@ func _process(delta: float) -> void:
 			is_dashing = false
 			dash_cooldown_timer = DASH_COOLDOWN
 	else:
+		if is_drifting:
+			drift_timer += delta
+			if drift_timer >= DRIFT_DURATION:
+				is_drifting = false
+				drift_cooldown_timer = DRIFT_COOLDOWN
+
+		var steer_speed := MAX_STEER_SPEED * (DRIFT_SPEED_MULT if is_drifting else 1.0)
+		var steer_response := STEER_RESPONSE * (DRIFT_STEER_MULT if is_drifting else 1.0)
+
 		var left := Input.is_physical_key_pressed(key_left)
 		var right := Input.is_physical_key_pressed(key_right)
 		var target_vx := 0.0
 		if left and not right:
-			target_vx = -MAX_STEER_SPEED
+			target_vx = -steer_speed
 		elif right and not left:
-			target_vx = MAX_STEER_SPEED
-		var approach := 1.0 - exp(-STEER_RESPONSE * delta)
+			target_vx = steer_speed
+		var approach := 1.0 - exp(-steer_response * delta)
 		car_vx += (target_vx - car_vx) * approach
 
 		var shoulder := board_width * 0.06
@@ -179,7 +219,14 @@ func _process(delta: float) -> void:
 		else:
 			car_x = next_x
 
-		tilt = clamp(car_vx / MAX_STEER_SPEED, -1.0, 1.0) * MAX_TILT
+		var tilt_cap := DRIFT_MAX_TILT if is_drifting else MAX_TILT
+		tilt = clamp(car_vx / MAX_STEER_SPEED, -1.0, 1.0) * tilt_cap
+
+		if is_drifting:
+			drift_mark_timer -= delta
+			if drift_mark_timer <= 0.0 and absf(car_vx) > 40.0:
+				drift_mark_timer = DRIFT_MARK_INTERVAL
+				_spawn_drift_mark()
 
 	player_car.rotation = tilt
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
@@ -199,6 +246,12 @@ func _process(delta: float) -> void:
 		if child.position.y > board_height + 140.0:
 			child.queue_free()
 
+	var speed := current_speed()
+	for mark in drift_marks:
+		if is_instance_valid(mark):
+			mark.position.y += speed * delta
+	drift_marks = drift_marks.filter(func(m): return is_instance_valid(m))
+
 func _spawn_dash_ghost() -> void:
 	if player_car.sprite.texture == null:
 		return
@@ -213,6 +266,19 @@ func _spawn_dash_ghost() -> void:
 	var tw := create_tween()
 	tw.tween_property(ghost, "modulate:a", 0.0, 0.22)
 	tw.tween_callback(ghost.queue_free)
+
+func _spawn_drift_mark() -> void:
+	var sz := _car_size(PLAYER_KIND)
+	var mark := ColorRect.new()
+	mark.color = Color(0.05, 0.05, 0.05, 0.4)
+	mark.size = Vector2(sz.x * 0.09, sz.y * 0.16)
+	mark.position = player_car.position - mark.size * 0.5 + Vector2(0, sz.y * 0.32)
+	mark.z_index = -2
+	add_child(mark)
+	drift_marks.append(mark)
+	var tw := create_tween()
+	tw.tween_property(mark, "modulate:a", 0.0, 0.5)
+	tw.tween_callback(mark.queue_free)
 
 func _spawn_obstacle() -> void:
 	var used_lanes: Array = []

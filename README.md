@@ -23,6 +23,8 @@ Launch the game and you'll get: **Play** → pick 2, 3, or 4 players → each pl
 
 Double-tap left or right (quickly, twice back-to-back) to **dash** exactly one lane over — a fast eased snap with a fading afterimage trail, on a short per-player cooldown.
 
+Tap left then right (or right then left) back-to-back to **drift** — a brief steering boost (faster, wider turns) with a stronger lean and a skid-mark trail, also on a short cooldown.
+
 Press **Enter** to restart after a round ends. Press **Esc** during a round to return to the main menu.
 
 ## Running it
