@@ -30,12 +30,13 @@ const DASH_COOLDOWN := 0.18
 const DASH_TILT := 0.55
 const DASH_GHOST_INTERVAL := 0.03
 
-const DRIFT_DURATION := 0.45 # how long the steering boost lasts
-const DRIFT_COOLDOWN := 0.25
-const DRIFT_STEER_MULT := 2.2 # how much faster car_vx approaches target while drifting
-const DRIFT_SPEED_MULT := 1.35 # how much higher the lateral top speed is while drifting
-const DRIFT_MAX_TILT := 0.5
-const DRIFT_MARK_INTERVAL := 0.045
+const DRIFT_COOLDOWN := 0.3
+const DRIFT_GRIP_MULT := 0.22 # car_vx (actual momentum) approaches target this much slower
+const DRIFT_NOSE_RESPONSE := 14.0 # how fast the car's facing/tilt snaps to the input direction
+const DRIFT_MAX_TILT := 0.68 # nose can point much further off than normal steering
+const SLIP_MARK_THRESHOLD := 90.0 # |target_vx - car_vx| above this counts as "sliding"
+const DRIFT_MARK_INTERVAL := 0.05
+const DRIFT_MARK_OFFSET := 0.22 # fraction of car width, rear-wheel track spacing
 
 @onready var road: Road = $Road
 @onready var obstacle_container: Node2D = $ObstacleContainer
@@ -63,7 +64,6 @@ var dash_cooldown_timer: float = 0.0
 var dash_ghost_timer: float = 0.0
 
 var is_drifting: bool = false
-var drift_timer: float = 0.0
 var drift_cooldown_timer: float = 0.0
 var drift_mark_timer: float = 0.0
 var drift_marks: Array = []
@@ -145,7 +145,6 @@ func _try_start_drift() -> void:
 	if is_dashing or is_drifting or drift_cooldown_timer > 0.0:
 		return
 	is_drifting = true
-	drift_timer = 0.0
 	drift_mark_timer = 0.0
 
 func _car_size(kind_cfg: Dictionary) -> Vector2:
@@ -187,23 +186,26 @@ func _process(delta: float) -> void:
 			is_dashing = false
 			dash_cooldown_timer = DASH_COOLDOWN
 	else:
-		if is_drifting:
-			drift_timer += delta
-			if drift_timer >= DRIFT_DURATION:
-				is_drifting = false
-				drift_cooldown_timer = DRIFT_COOLDOWN
-
-		var steer_speed := MAX_STEER_SPEED * (DRIFT_SPEED_MULT if is_drifting else 1.0)
-		var steer_response := STEER_RESPONSE * (DRIFT_STEER_MULT if is_drifting else 1.0)
-
+		# Steering top speed never changes — drifting is about losing grip,
+		# not going faster. Only how quickly the car's actual momentum
+		# (car_vx) can catch up to the input direction changes.
 		var left := Input.is_physical_key_pressed(key_left)
 		var right := Input.is_physical_key_pressed(key_right)
 		var target_vx := 0.0
 		if left and not right:
-			target_vx = -steer_speed
+			target_vx = -MAX_STEER_SPEED
 		elif right and not left:
-			target_vx = steer_speed
-		var approach := 1.0 - exp(-steer_response * delta)
+			target_vx = MAX_STEER_SPEED
+
+		# Drift persists as long as you keep steering in some direction —
+		# switching left/right mid-drift keeps it going. It only ends the
+		# moment you let go of both keys.
+		if is_drifting and target_vx == 0.0:
+			is_drifting = false
+			drift_cooldown_timer = DRIFT_COOLDOWN
+
+		var grip := STEER_RESPONSE * (DRIFT_GRIP_MULT if is_drifting else 1.0)
+		var approach := 1.0 - exp(-grip * delta)
 		car_vx += (target_vx - car_vx) * approach
 
 		var shoulder := board_width * 0.06
@@ -219,14 +221,19 @@ func _process(delta: float) -> void:
 		else:
 			car_x = next_x
 
-		var tilt_cap := DRIFT_MAX_TILT if is_drifting else MAX_TILT
-		tilt = clamp(car_vx / MAX_STEER_SPEED, -1.0, 1.0) * tilt_cap
-
 		if is_drifting:
+			# Nose points where you're steering, well ahead of where the car
+			# is actually still travelling — that gap is the slide.
+			var nose_target: float = sign(target_vx) * DRIFT_MAX_TILT if target_vx != 0.0 else player_car.rotation
+			tilt = move_toward(player_car.rotation, nose_target, DRIFT_NOSE_RESPONSE * delta)
+
+			var slip: float = absf(target_vx - car_vx)
 			drift_mark_timer -= delta
-			if drift_mark_timer <= 0.0 and absf(car_vx) > 40.0:
+			if drift_mark_timer <= 0.0 and slip > SLIP_MARK_THRESHOLD:
 				drift_mark_timer = DRIFT_MARK_INTERVAL
-				_spawn_drift_mark()
+				_spawn_drift_mark(sz.x)
+		else:
+			tilt = clamp(car_vx / MAX_STEER_SPEED, -1.0, 1.0) * MAX_TILT
 
 	player_car.rotation = tilt
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
@@ -267,18 +274,22 @@ func _spawn_dash_ghost() -> void:
 	tw.tween_property(ghost, "modulate:a", 0.0, 0.22)
 	tw.tween_callback(ghost.queue_free)
 
-func _spawn_drift_mark() -> void:
+func _spawn_drift_mark(car_w: float) -> void:
 	var sz := _car_size(PLAYER_KIND)
-	var mark := ColorRect.new()
-	mark.color = Color(0.05, 0.05, 0.05, 0.4)
-	mark.size = Vector2(sz.x * 0.09, sz.y * 0.16)
-	mark.position = player_car.position - mark.size * 0.5 + Vector2(0, sz.y * 0.32)
-	mark.z_index = -2
-	add_child(mark)
-	drift_marks.append(mark)
-	var tw := create_tween()
-	tw.tween_property(mark, "modulate:a", 0.0, 0.5)
-	tw.tween_callback(mark.queue_free)
+	var mark_size := Vector2(sz.x * 0.09, sz.y * 0.16)
+	var rear_y: float = player_car.position.y + sz.y * 0.32
+	for side in [-1.0, 1.0]:
+		var mark := ColorRect.new()
+		mark.color = Color(0.05, 0.05, 0.05, 0.4)
+		mark.size = mark_size
+		var mark_x: float = player_car.position.x + side * car_w * DRIFT_MARK_OFFSET
+		mark.position = Vector2(mark_x, rear_y) - mark_size * 0.5
+		mark.z_index = -2
+		add_child(mark)
+		drift_marks.append(mark)
+		var tw := create_tween()
+		tw.tween_property(mark, "modulate:a", 0.0, 0.5)
+		tw.tween_callback(mark.queue_free)
 
 func _spawn_obstacle() -> void:
 	var used_lanes: Array = []
