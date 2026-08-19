@@ -37,12 +37,19 @@ Cars are real sprites (`sprites/cars/*.png`) — top-down orthographic pixel art
 
 Every `Car` (`scenes/Car.tscn`) has an empty `Sprite2D` child, so you can swap in your own art any time: open it in the editor and drag a PNG onto the Sprite2D's **Texture** property in the Inspector, or call `set_texture()` from code (see `PlayerBoard.gd` for examples). The placeholder shape (a colored `Polygon2D`) automatically hides once a texture is assigned. `Car.gd` scales whatever texture is provided to the car's collision size.
 
+## Road art
+
+The road and median are real textures too (`sprites/road/*.png`), both cropped from the same hand-drawn source image so their grass/guardrail style matches exactly. `Road.gd` and `LaneDivider.gd` scroll them by drawing repeated tiles offset by accumulated distance, instead of procedurally drawing lanes/grass. `Road.SHOULDER_RATIO` is tuned to the texture's actual asphalt width so cars only ever drive on the gray part.
+
+Traffic also moves at slightly different speeds per vehicle (`PlayerBoard._spawn_obstacle` assigns each one a random `speed_mult`) so gaps open and close between cars instead of the whole field scrolling in perfect lockstep.
+
 ## Project structure
 
 ```
 project.godot
 sprites/
   cars/               generated top-down vehicle PNGs (sedans, SUVs, pickups, vans, trucks, buses, motorcycles)
+  road/               road + median tile textures, cropped from one source image
 scenes/
   MainMenu.tscn       title screen, Play button
   PlayerSelect.tscn    choose 2/3/4 players
@@ -58,7 +65,7 @@ scripts/
   SkinSelect.gd        dynamic per-player sprite-pick panels, duplicate-skin avoidance
   Main.gd              instantiates PlayerBoards + dividers for the chosen player count
   PlayerBoard.gd        steering physics, spawning, scoring, collision handling
-  Road.gd               lane math and road/dash rendering
+  Road.gd               lane math and scrolling road-texture rendering
   Car.gd                 swaps between placeholder shape and an assigned texture
   LaneDivider.gd         scrolling grass/tree median renderer
 ```

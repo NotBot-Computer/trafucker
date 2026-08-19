@@ -248,12 +248,13 @@ func _process(delta: float) -> void:
 		spawn_timer = spawn_interval()
 		_spawn_obstacle()
 
+	var speed := current_speed()
 	for child in obstacle_container.get_children():
-		child.position.y += current_speed() * delta
+		var speed_mult: float = child.get_meta("speed_mult", 1.0)
+		child.position.y += speed * speed_mult * delta
 		if child.position.y > board_height + 140.0:
 			child.queue_free()
 
-	var speed := current_speed()
 	for mark in drift_marks:
 		if is_instance_valid(mark):
 			mark.position.y += speed * delta
@@ -313,6 +314,7 @@ func _spawn_obstacle() -> void:
 	var textures: Array = kind_cfg["textures"]
 	obstacle.set_texture(textures[randi() % textures.size()])
 	obstacle.set_meta("lane", lane)
+	obstacle.set_meta("speed_mult", randf_range(0.78, 1.28))
 	obstacle.position = Vector2(road.lane_center_x(lane), -sz.y - 40.0)
 
 func _pick_traffic_kind() -> Dictionary:
