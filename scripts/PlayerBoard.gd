@@ -35,8 +35,7 @@ const DRIFT_COOLDOWN := 0.3
 const DRIFT_GRIP_MULT := 0.48 # car_vx (actual momentum) approaches target this much slower
 const DRIFT_NOSE_RESPONSE := 14.0 # how fast the car's facing/tilt snaps to the input direction
 const DRIFT_MAX_TILT := 0.46 # nose can point further off than normal steering, but not extreme
-const SLIP_MARK_THRESHOLD := 90.0 # |target_vx - car_vx| above this counts as "sliding"
-const DRIFT_MARK_INTERVAL := 0.05
+const DRIFT_MARK_INTERVAL := 0.045
 const DRIFT_MARK_OFFSET := 0.22 # fraction of car width, rear-wheel track spacing
 
 @onready var road: Road = $Road
@@ -229,9 +228,8 @@ func _process(delta: float) -> void:
 			var nose_target: float = sign(target_vx) * DRIFT_MAX_TILT if target_vx != 0.0 else player_car.rotation
 			tilt = move_toward(player_car.rotation, nose_target, DRIFT_NOSE_RESPONSE * delta)
 
-			var slip: float = absf(target_vx - car_vx)
 			drift_mark_timer -= delta
-			if drift_mark_timer <= 0.0 and slip > SLIP_MARK_THRESHOLD:
+			if drift_mark_timer <= 0.0:
 				drift_mark_timer = DRIFT_MARK_INTERVAL
 				_spawn_drift_mark(sz.x)
 		else:
@@ -278,11 +276,11 @@ func _spawn_dash_ghost() -> void:
 
 func _spawn_drift_mark(car_w: float) -> void:
 	var sz := _car_size(PLAYER_KIND)
-	var mark_size := Vector2(sz.x * 0.09, sz.y * 0.16)
-	var rear_y: float = player_car.position.y + sz.y * 0.32
+	var mark_size := Vector2(sz.x * 0.16, sz.y * 0.32)
+	var rear_y: float = player_car.position.y + sz.y * 0.28
 	for side in [-1.0, 1.0]:
 		var mark := ColorRect.new()
-		mark.color = Color(0.05, 0.05, 0.05, 0.4)
+		mark.color = Color(0.05, 0.05, 0.05, 0.7)
 		mark.size = mark_size
 		var mark_x: float = player_car.position.x + side * car_w * DRIFT_MARK_OFFSET
 		mark.position = Vector2(mark_x, rear_y) - mark_size * 0.5
@@ -290,7 +288,8 @@ func _spawn_drift_mark(car_w: float) -> void:
 		add_child(mark)
 		drift_marks.append(mark)
 		var tw := create_tween()
-		tw.tween_property(mark, "modulate:a", 0.0, 0.5)
+		tw.tween_interval(0.5)
+		tw.tween_property(mark, "modulate:a", 0.0, 0.6)
 		tw.tween_callback(mark.queue_free)
 
 func _spawn_obstacle() -> void:

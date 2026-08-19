@@ -8,6 +8,7 @@
 script = ExtResource("1_board")
 
 [node name="Road" type="Node2D" parent="."]
+z_index = -10
 script = ExtResource("2_road")
 
 [node name="ObstacleContainer" type="Node2D" parent="."]
