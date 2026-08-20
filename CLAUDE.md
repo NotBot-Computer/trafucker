@@ -13,7 +13,10 @@ Headless compile check (catches GDScript parse/compile errors only — does NOT 
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --quit
 ```
-Any `SCRIPT ERROR:` or `Failed to load script` in the output means a script is broken. Clean output (just the engine banner line) means all scripts compiled.
+Any `SCRIPT ERROR:` or `Failed to load script` in the output means a script is broken. Clean output (just the engine banner line) means all scripts *reachable from the boot scene* compiled — **the bare command only boots `MainMenu.tscn` and quits, so it never loads `Main.tscn`/`PlayerBoard.gd`/`Road.gd`/`LaneDivider.gd` or anything else only reached by playing through the menu flow.** A parse error in one of those scripts can ship silently past this check (this happened once — see docs/PROJECT_STATE.md §8/§12). When changing a script that isn't in the boot scene's own chain, also run the check against the actual scene, e.g.:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --quit res://scenes/Main.tscn
+```
 
 Godot binary lives at `/opt/homebrew/bin/godot` (CLI) — there's also `Godot.app` in `/Applications` for the GUI editor, but the `godot` CLI command works for both editor (`godot .`) and headless (`godot --headless ...`) use.
 
