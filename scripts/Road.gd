@@ -28,7 +28,9 @@ func _draw() -> void:
 	var tile_h := ROAD_TEXTURE.get_height() * scale_factor
 	var scroll := fmod(distance, tile_h)
 
-	var y := -scroll
+	# Tiles anchor just above the top edge and slide toward +y (down, toward
+	# the player) as distance grows, matching the direction traffic moves in.
+	var y := scroll - tile_h
 	while y < height:
 		draw_texture_rect(ROAD_TEXTURE, Rect2(0, y, width, tile_h), false)
 		y += tile_h

@@ -32,7 +32,9 @@ func _draw() -> void:
 	var tile_h := MEDIAN_TEXTURE.get_height() * scale_factor
 	var scroll := fmod(distance, tile_h)
 
-	var y := -scroll
+	# Same anchoring as Road._draw(): slide toward +y (down, toward the
+	# player) so the median matches the direction traffic moves in.
+	var y := scroll - tile_h
 	while y < height:
 		draw_texture_rect(MEDIAN_TEXTURE, Rect2(0, y, width, tile_h), false)
 		y += tile_h
