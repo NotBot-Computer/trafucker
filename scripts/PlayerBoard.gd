@@ -313,8 +313,10 @@ func _spawn_obstacle() -> void:
 	obstacle.set_size(sz.x, sz.y)
 	var textures: Array = kind_cfg["textures"]
 	obstacle.set_texture(textures[randi() % textures.size()])
+	var frac_min: float = kind_cfg.get("speed_frac_min", 0.55)
+	var frac_max: float = kind_cfg.get("speed_frac_max", 0.85)
 	obstacle.set_meta("lane", lane)
-	obstacle.set_meta("speed_mult", randf_range(0.78, 1.28))
+	obstacle.set_meta("speed_mult", randf_range(frac_min, frac_max))
 	obstacle.position = Vector2(road.lane_center_x(lane), -sz.y - 40.0)
 
 func _pick_traffic_kind() -> Dictionary:

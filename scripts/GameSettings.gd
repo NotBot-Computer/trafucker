@@ -20,9 +20,20 @@ var skins: Array[Texture2D] = [PLAYER_SKINS[0]["texture"], PLAYER_SKINS[1]["text
 # width * height_frac (matched to each kind's real sprite aspect ratio so
 # nothing looks stretched). weight controls how often a kind is picked
 # relative to the others (see PlayerBoard._pick_traffic_kind).
+#
+# speed_frac_min/max bound how fast each kind closes the gap to the player,
+# as a fraction of the road's own scroll speed (see PlayerBoard._process).
+# This must stay below 1.0: at 1.0 a vehicle's own forward speed would be
+# zero (a parked car matches the road's scroll exactly), and anything at or
+# above 1.0 would mean it's closing faster than a stationary object could —
+# i.e. driving backward — which reads as the car sliding the wrong way
+# across the lane markings. Heavier/slower-driving kinds (trucks, buses) sit
+# near the top of that range so you catch up to them quickly; nimbler kinds
+# (motorcycles) sit near the bottom so they roughly keep pace with you.
 const TRAFFIC_KINDS: Array[Dictionary] = [
 	{
 		"kind": "sedan", "width_frac": 0.62, "height_frac": 1.69, "weight": 30,
+		"speed_frac_min": 0.55, "speed_frac_max": 0.85,
 		"textures": [
 			preload("res://sprites/cars/sedan_silver.png"),
 			preload("res://sprites/cars/sedan_brown.png"),
@@ -34,6 +45,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 	},
 	{
 		"kind": "suv", "width_frac": 0.68, "height_frac": 1.79, "weight": 18,
+		"speed_frac_min": 0.55, "speed_frac_max": 0.85,
 		"textures": [
 			preload("res://sprites/cars/suv_gold.png"),
 			preload("res://sprites/cars/suv_silver.png"),
@@ -45,6 +57,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 	},
 	{
 		"kind": "pickup", "width_frac": 0.62, "height_frac": 1.52, "weight": 14,
+		"speed_frac_min": 0.6, "speed_frac_max": 0.9,
 		"textures": [
 			preload("res://sprites/cars/pickup_red.png"),
 			preload("res://sprites/cars/pickup_green.png"),
@@ -58,6 +71,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 	},
 	{
 		"kind": "van", "width_frac": 0.58, "height_frac": 1.55, "weight": 12,
+		"speed_frac_min": 0.6, "speed_frac_max": 0.9,
 		"textures": [
 			preload("res://sprites/cars/van_blue.png"),
 			preload("res://sprites/cars/van_white.png"),
@@ -72,6 +86,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 	},
 	{
 		"kind": "truck", "width_frac": 0.66, "height_frac": 4.34, "weight": 8,
+		"speed_frac_min": 0.75, "speed_frac_max": 0.95,
 		"textures": [
 			preload("res://sprites/cars/truck_blue.png"),
 			preload("res://sprites/cars/truck_red.png"),
@@ -81,6 +96,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 	},
 	{
 		"kind": "bus", "width_frac": 0.60, "height_frac": 2.43, "weight": 6,
+		"speed_frac_min": 0.75, "speed_frac_max": 0.95,
 		"textures": [
 			preload("res://sprites/cars/bus_transit.png"),
 			preload("res://sprites/cars/bus_coach.png"),
@@ -88,6 +104,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 	},
 	{
 		"kind": "motorcycle", "width_frac": 0.30, "height_frac": 2.07, "weight": 6,
+		"speed_frac_min": 0.35, "speed_frac_max": 0.65,
 		"textures": [
 			preload("res://sprites/cars/moto_red.png"),
 			preload("res://sprites/cars/moto_maroon.png"),
