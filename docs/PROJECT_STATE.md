@@ -1,6 +1,6 @@
 # Traffic Tower — Project State
 
-Last updated: 2026-08-20, at commit `dbab782` on `main` (working tree clean, pushed to `origin/main` — `github.com/NotBot-Computer/trafucker`).
+Last updated: 2026-08-20, at commit `b3e84d6` on `main` (working tree clean apart from this doc's own commit, which lands immediately after — pushed to `origin/main` — `github.com/NotBot-Computer/trafucker`).
 
 This document is a standalone handoff. A new session should be able to continue this project using only the repository, `CLAUDE.md`, and this file — no prior conversation is available.
 
@@ -27,7 +27,7 @@ Global/shared state lives in the `GameSettings` autoload (`scripts/GameSettings.
 | `scripts/PlayerBoard.gd` | The core gameplay loop for one player: steering physics (momentum-based, not lane-snapped), dash, drift, obstacle spawning, per-obstacle speed, collision → crash. |
 | `scripts/Road.gd` | Lane-position math (`lane_center_x`, `lane_width`) and draws the scrolling road texture. |
 | `scripts/LaneDivider.gd` | Draws the scrolling grass/tree median between boards. Runs its own independent speed-ramp timer (mirrors `PlayerBoard`'s constants but is a separate copy — see §7 and §9). |
-| `scripts/Car.gd` | Generic vehicle node (used for both the player car and every traffic obstacle). Shows a placeholder `Polygon2D` shape until a texture is assigned via `set_texture()`, then scales that texture to the requested size. |
+| `scripts/Car.gd` | Generic vehicle node (used for both the player car and every traffic obstacle). Shows a placeholder `Polygon2D` shape until a texture is assigned via `set_texture()`, then scales that texture to the requested size. Also owns two procedural corner turn-signal lamps (`start_indicator()`/`stop_indicator()`), blinked from `PlayerBoard`'s lane-change state machine. |
 | `scripts/MainMenu.gd`, `PlayerSelect.gd`, `SkinSelect.gd` | Menu flow screens. Nothing subtle here. |
 | `scenes/*.tscn` | Godot scene files pairing the above scripts with their node trees. |
 | `sprites/cars/*.png`, `sprites/road/*.png` | Real hand-cropped art (not procedural). See README's "Car art" / "Road art" sections for provenance. |
@@ -39,12 +39,30 @@ Global/shared state lives in the `GameSettings` autoload (`scripts/GameSettings.
 - **Dash**: double-tap a direction within a short window → fast eased snap exactly one lane over, with a fading afterimage trail, on a per-player cooldown.
 - **Drift**: triggered by a genuine velocity reversal (pressing the opposite direction while still carrying real speed the other way) — not a separate button/gesture. Nose points where you steer, actual momentum lags behind at reduced grip, leaves a twin continuous skid-mark trail (`Line2D`, not stamped marks). The drift *session* (trail + nose lead, `is_drifting`) persists across direction switches and only ends after a short release-grace window with both keys up; *grip* (`drift_sliding`) is a separate sub-state that resolves once momentum catches up to the held direction, and instantly re-engages on a fresh reversal. See §5/§6/§8 for why this is split this way — it was not obvious up front.
 - Traffic: 7 vehicle kinds (sedan, SUV, pickup, van, truck, bus, motorcycle) with weighted random spawn selection, real cropped sprite art, per-kind size ratios matched to each sprite's real aspect ratio.
+- **Chaotic lane-changing traffic**: a random slice of spawned obstacles blink a turn signal, then smoothly merge one lane over mid-transit, instead of every vehicle holding a perfectly straight line for its whole lifetime. See §5 session D for the fairness constraints that keep this from feeling cheap.
 - Speed ramp: `current_speed() = BASE_SPEED + elapsed * SPEED_PER_SECOND` (160 base, +6/s), same formula shared conceptually across `PlayerBoard` and `LaneDivider`.
 - Round scoring by distance traveled; game-over overlay declares the winner; Enter restarts, Esc returns to menu.
 - Road and median rendered as tiled real-texture scrolling strips (not procedurally drawn shapes) — both cropped from the same source art so grass/guardrail styling matches exactly (`Road.SHOULDER_RATIO` is tuned to the texture's actual asphalt width).
 - **Boost**: a per-player charge bar (drawn above the car via `PlayerBoard._draw()`) fills while `is_drifting` is true. Spent by holding the player's `confirm` key (bound per-player in `PLAYER_CONFIGS`, previously unused during a round) — a hold-to-drain resource, not an instant full-bar burn, so a player can spend part of the bar and bank the rest. Speed multiplier is re-read from the *current* charge every frame across three tiers (1.3x/1.5x/1.8x), so a long burn from a full bar visibly weakens as it drains through them. Multiplies `current_speed()` only (not `elapsed`), so it doesn't touch the permanent difficulty ramp. Exhaust is small procedural flame polygons (same technique as the dash-ghost trail, no particle system/new art) tinted from the player's own car color, which required adding a real `Color` per skin (`GameSettings.PLAYER_SKINS[i]["color"]`) since skins were texture-only before — threaded through `SkinSelect` lock-in → `Main._build_boards()` → `PlayerBoard.body_color`. See §5 session C and §12 for details.
 
 ## 5. Session history
+
+### 2026-08-20, session D: chaotic lane-changing traffic + turn signals
+
+User asked for traffic to feel more chaotic — cars and trucks occasionally changing lanes — but explicitly wanted it kept fun/fair rather than cheap, and asked for a real-car-style yellow indicator light that blinks before the lane change starts, the way a real turn signal does.
+
+Built as two pieces:
+
+1. **Turn signal lamps (`Car.gd`)**: two small `Polygon2D` lamps built procedurally in `_ready()`/positioned in `_position_indicators()` (called from `_rebuild()`), so no scene or art changes were needed and it works identically on the placeholder shape and on real cropped-photo textures. `start_indicator(side)` (-1 left, 1 right) turns the correct lamp on immediately and arms a repeating blink via `_process`/`INDICATOR_BLINK_INTERVAL` (0.16s); `stop_indicator()` kills both. This node only owns the blink animation — it has no opinion about *when* to signal.
+2. **Lane-change state machine (`PlayerBoard.gd`)**: `_maybe_flag_lane_change()` flags ~22% (`LANE_CHANGE_CHANCE`) of newly spawned obstacles with `lc_state = "pending"` and a random trigger y within the top half of the board (`LANE_CHANGE_TRIGGER_Y_MIN/MAX_FRAC`, 12%–50% down). `_update_obstacle_lane_change()`, called once per obstacle per frame from the same loop that already moves them, drives `pending -> warning -> moving -> settled -> idle`:
+   - `pending`: waits until the obstacle reaches its trigger y, then calls `_pick_lane_change_direction()`, which only offers a direction whose target lane is clear of other traffic within `LANE_CHANGE_SAFE_GAP` (200px) of the same y (`_lane_clear_near()`). If neither adjacent lane is safe, it cancels back to `idle` rather than forcing a move.
+   - `warning`: indicator blinks for `LANE_CHANGE_INDICATOR_WARNING` with the car still going perfectly straight — no motion at all yet.
+   - `moving`: smoothstep-eased slide from the old lane center to the new one over `LANE_CHANGE_DURATION`.
+   - `settled`: keeps blinking for `LANE_CHANGE_INDICATOR_TAIL` after arriving (a real signal doesn't cut off instantly either), then calls `stop_indicator()` and goes `idle` for good — each obstacle changes lanes at most once.
+
+The obstacle's `lane` meta (already read by `_spawn_obstacle()`'s used-lane check) is updated the moment the direction is *decided*, not once the slide finishes — so a car mid-merge still correctly blocks a new spawn or another lane-change from targeting the lane it's moving into.
+
+User playtested and asked for the indicator to "turn a lit bit earlier" — `LANE_CHANGE_INDICATOR_WARNING` was bumped `0.7s -> 1.3s` so the blink-before-move gap reads clearly. Confirmed after that change ("good push it").
 
 ### 2026-08-20, session C: drift-charged boost system
 
@@ -95,6 +113,7 @@ User confirmed the result looks correct after fix #3 ("its great").
 - **`target_vx` tie-breaks toward the most-recently-pressed key on overlap, not neutral.** Treating "both steer keys held" as 0 (the original behavior) seems like the obviously-correct default, but it isn't what a fast key switch on a real keyboard produces — see attempt 5 in §5. Any future rework of the steering input must preserve `steer_priority` or reintroduce this exact bug.
 - **Boost is hold-to-drain, not press-to-burn-all.** First implementation (session C, pass 1) spent the entire bar on a single keypress for a fixed-duration boost. User explicitly wanted partial spending, player-controlled amount, and unused charge preserved — a resource you dip into, not an ability you trigger. This is a real design requirement, not just a numbers tweak; don't revert to a fixed-consume-all model without re-confirming with the user.
 - **Boost's speed tier is re-read from *current* charge every frame, not locked in at activation.** Considered locking the multiplier to whatever tier the bar was in when `confirm` was first pressed, but re-reading it live means a long burn from a full bar naturally tapers off in strength as it drains through the tiers — matching "a full bar should last longer" (more charge = more sustained time at *some* level of boost, front-loaded toward the strong end) without needing a separate duration-per-tier system.
+- **Lane changes only commit when the target lane is verified clear, never on a fixed schedule.** Considered just picking a random direction at the trigger point, but that risks an obstacle sliding straight through another car — `_lane_clear_near()` gates the decision so a blocked lane silently cancels the change instead. This is what keeps "more chaotic" from becoming "unfair"; don't remove the safety check to simplify the state machine.
 - **`body_color` on `PlayerBoard` is no longer just a placeholder-shape fallback.** It predates session C as an unused fallback color for `Car.gd`'s placeholder `Polygon2D` (real skins always use a texture, which hides the placeholder — see §12). Session C repurposed it as the actual per-player theme color for boost UI and exhaust flames by having `Main._build_boards()` populate it from the new `GameSettings.skin_colors` array. If skin selection is ever reworked, `skin_colors` must stay in lockstep with `skins` (same index, same length) or boost/exhaust colors will mismatch a player's actual car.
 
 ## 7. Assumptions, constraints, conventions that must be preserved
@@ -129,8 +148,9 @@ User confirmed the result looks correct after fix #3 ("its great").
 
 ## 10. Exact current state
 
-- Branch: `main`. HEAD: `dbab782` ("Render boost bar as three distinct sections while charging"). This doc's own commit will land immediately after. Working tree otherwise clean, pushed to `origin/main` (`github.com/NotBot-Computer/trafucker`).
-- All bugs/features described in §5 (sessions A, B, C) are fixed/implemented, committed, and pushed. The user confirmed session B's fix ("its great, push it") and both passes of session C's boost work ("great push it") in-editor.
+- Branch: `main`. HEAD: `b3e84d6` ("Add chaotic lane-changing traffic with turn-signal warning"). This doc's own commit will land immediately after. Working tree otherwise clean, pushed to `origin/main` (`github.com/NotBot-Computer/trafucker`).
+- All bugs/features described in §5 (sessions A, B, C, D) are fixed/implemented, committed, and pushed. The user confirmed session B's fix ("its great, push it"), both passes of session C's boost work ("great push it"), and session D's lane-change feature plus its warning-timing tweak ("good push it") in-editor.
+- `PlayerBoard.gd` also now has the lane-change state machine described in §5 session D: `_maybe_flag_lane_change()`, `_update_obstacle_lane_change()`, `_pick_lane_change_direction()`, `_lane_clear_near()`, driven by `lc_state`/`lc_trigger_y`/`lc_from_x`/`lc_to_x`/`lc_timer` metadata on each obstacle node (same convention as the pre-existing `lane`/`speed_mult` meta). `Car.gd` now has `indicator_left`/`indicator_right`/`indicator_side`/`indicator_timer` plus `start_indicator()`/`stop_indicator()`.
 - `PlayerBoard.gd` now has: `is_drifting` (session), `drift_sliding` (grip sub-state), `drift_release_timer` (release-grace countdown), `steer_priority` (both-keys-held tiebreak), plus the `Line2D`-based `drift_trails`/`drift_trail_sides` replacing the old `ColorRect` stamps. If you're about to touch drift/steering code, read `_unhandled_input`, `_try_start_drift`, `_end_drift`, and the steering block in `_process` together — they're tightly coupled across all four of those variables now.
 - `PlayerBoard.gd` also now has: `boost_charge` (0..1), `boost_active` (true while `confirm` held and charge remains), `boost_flame_timer`, plus `key_confirm` (exported, set from `PLAYER_CONFIGS["confirm"]` in `Main._build_boards()`). `_boost_speed_mult()` derives the tier multiplier from *current* `boost_charge` — every caller of `current_speed()` implicitly depends on it while `boost_active` is true. `_draw()` on `PlayerBoard` (new this session — it didn't have one before) renders the sectioned bar; it's driven by `queue_redraw()` at the end of every `_process()`, same pattern as `Road`/`LaneDivider`.
 
