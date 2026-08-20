@@ -16,6 +16,11 @@ const SPEED_PER_SECOND := 6.0
 var elapsed: float = 0.0
 var distance: float = 0.0
 
+func reset() -> void:
+	elapsed = 0.0
+	distance = 0.0
+	queue_redraw()
+
 func _process(delta: float) -> void:
 	elapsed += delta
 	var speed := BASE_SPEED + elapsed * SPEED_PER_SECOND

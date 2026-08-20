@@ -79,6 +79,8 @@ func _start_round() -> void:
 	overlay.visible = false
 	for b in boards:
 		b.start_round()
+	for d in dividers_container.get_children():
+		d.reset()
 
 func _on_board_crashed() -> void:
 	for b in boards:
