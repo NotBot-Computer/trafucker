@@ -24,6 +24,23 @@ const MAX_STEER_SPEED := 460.0
 const STEER_RESPONSE := 9.0
 const MAX_TILT := 0.32
 
+# Traffic lane changes: a random slice of spawned obstacles will, partway
+# down the board, signal and merge one lane over — real chaos instead of
+# every car holding a perfectly straight line. Kept fair (not just chaotic)
+# by three constraints: it only *arms* while the obstacle is still high up
+# the board (LANE_CHANGE_TRIGGER_*_FRAC), so the player always has reaction
+# room; the target lane must be clear of other traffic near the same y
+# (_lane_clear_near) before it commits, so it never pops through another
+# car; and the indicator blinks for a full warning window before any motion
+# starts, same as a real turn signal, so the move is always telegraphed.
+const LANE_CHANGE_CHANCE := 0.22 # fraction of spawned obstacles that may change lanes at all
+const LANE_CHANGE_TRIGGER_Y_MIN_FRAC := 0.12 # earliest point (fraction of board_height) a change may arm
+const LANE_CHANGE_TRIGGER_Y_MAX_FRAC := 0.5 # latest point — stays well above the player for reaction time
+const LANE_CHANGE_INDICATOR_WARNING := 1.3 # seconds of blinking before the car actually moves
+const LANE_CHANGE_DURATION := 0.5 # seconds spent sliding into the new lane
+const LANE_CHANGE_INDICATOR_TAIL := 0.3 # keeps blinking this long after settling, like a real signal
+const LANE_CHANGE_SAFE_GAP := 200.0 # min |dy| to another car already claiming the target lane
+
 const TAP_WINDOW := 0.28 # max gap between taps to count as back-to-back
 
 const DASH_DURATION := 0.14
@@ -426,6 +443,7 @@ func _process(delta: float) -> void:
 	for child in obstacle_container.get_children():
 		var speed_mult: float = child.get_meta("speed_mult", 1.0)
 		child.position.y += speed * speed_mult * delta
+		_update_obstacle_lane_change(child, delta)
 		if child.position.y > board_height + 140.0:
 			child.queue_free()
 
@@ -556,6 +574,101 @@ func _spawn_obstacle() -> void:
 	obstacle.set_meta("lane", lane)
 	obstacle.set_meta("speed_mult", randf_range(frac_min, frac_max))
 	obstacle.position = Vector2(road.lane_center_x(lane), -sz.y - 40.0)
+	_maybe_flag_lane_change(obstacle)
+
+func _maybe_flag_lane_change(obstacle) -> void:
+	if lane_count <= 1:
+		return
+	if randf() > LANE_CHANGE_CHANCE:
+		return
+	var min_y: float = board_height * LANE_CHANGE_TRIGGER_Y_MIN_FRAC
+	var max_y: float = board_height * LANE_CHANGE_TRIGGER_Y_MAX_FRAC
+	obstacle.set_meta("lc_state", "pending")
+	obstacle.set_meta("lc_trigger_y", randf_range(min_y, max_y))
+
+# Small state machine driven once per frame per obstacle from the movement
+# loop above: pending (waiting to reach its trigger y) -> warning (indicator
+# blinking, not yet moving) -> moving (sliding to the new lane center) ->
+# settled (still blinking briefly after arriving, like a real signal) -> idle.
+func _update_obstacle_lane_change(obstacle, delta: float) -> void:
+	var state: String = obstacle.get_meta("lc_state", "idle")
+	if state == "idle":
+		return
+
+	if state == "pending":
+		if obstacle.position.y >= obstacle.get_meta("lc_trigger_y", 0.0):
+			var cur_lane: int = obstacle.get_meta("lane", 0)
+			var dir := _pick_lane_change_direction(obstacle, cur_lane)
+			if dir == 0:
+				obstacle.set_meta("lc_state", "idle") # no safe lane right now; skip this one
+				return
+			var new_lane: int = cur_lane + dir
+			# Reserve the target lane immediately (not just once the slide
+			# finishes) so other spawns/lane-changes treat it as taken for
+			# the whole maneuver, matching how _spawn_obstacle already reads
+			# the "lane" meta for its own used-lane check.
+			obstacle.set_meta("lane", new_lane)
+			obstacle.set_meta("lc_from_x", obstacle.position.x)
+			obstacle.set_meta("lc_to_x", road.lane_center_x(new_lane))
+			obstacle.set_meta("lc_timer", 0.0)
+			obstacle.set_meta("lc_state", "warning")
+			obstacle.start_indicator(dir)
+		return
+
+	if state == "warning":
+		var t: float = obstacle.get_meta("lc_timer", 0.0) + delta
+		if t >= LANE_CHANGE_INDICATOR_WARNING:
+			obstacle.set_meta("lc_timer", 0.0)
+			obstacle.set_meta("lc_state", "moving")
+		else:
+			obstacle.set_meta("lc_timer", t)
+		return
+
+	if state == "moving":
+		var t: float = obstacle.get_meta("lc_timer", 0.0) + delta
+		var frac: float = clamp(t / LANE_CHANGE_DURATION, 0.0, 1.0)
+		var eased: float = frac * frac * (3.0 - 2.0 * frac) # smoothstep, eases in and out of the merge
+		var from_x: float = obstacle.get_meta("lc_from_x", obstacle.position.x)
+		var to_x: float = obstacle.get_meta("lc_to_x", obstacle.position.x)
+		obstacle.position.x = lerp(from_x, to_x, eased)
+		if frac >= 1.0:
+			obstacle.set_meta("lc_state", "settled")
+			obstacle.set_meta("lc_timer", 0.0)
+		else:
+			obstacle.set_meta("lc_timer", t)
+		return
+
+	if state == "settled":
+		var t: float = obstacle.get_meta("lc_timer", 0.0) + delta
+		if t >= LANE_CHANGE_INDICATOR_TAIL:
+			obstacle.stop_indicator()
+			obstacle.set_meta("lc_state", "idle")
+		else:
+			obstacle.set_meta("lc_timer", t)
+		return
+
+func _pick_lane_change_direction(obstacle, cur_lane: int) -> int:
+	var candidates: Array = []
+	if cur_lane > 0:
+		candidates.append(-1)
+	if cur_lane < lane_count - 1:
+		candidates.append(1)
+	candidates.shuffle()
+	for dir in candidates:
+		var target_lane: int = cur_lane + dir
+		if _lane_clear_near(obstacle, target_lane):
+			return dir
+	return 0
+
+func _lane_clear_near(obstacle, lane: int) -> bool:
+	for other in obstacle_container.get_children():
+		if other == obstacle:
+			continue
+		if int(other.get_meta("lane", -1)) != lane:
+			continue
+		if abs(other.position.y - obstacle.position.y) < LANE_CHANGE_SAFE_GAP:
+			return false
+	return true
 
 func _pick_traffic_kind() -> Dictionary:
 	var kinds: Array = GameSettings.TRAFFIC_KINDS
