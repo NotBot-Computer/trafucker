@@ -82,9 +82,12 @@ func _refresh() -> void:
 
 	if all_ready:
 		var chosen: Array[Texture2D] = []
+		var chosen_colors: Array[Color] = []
 		for idx in indices:
 			chosen.append(GameSettings.PLAYER_SKINS[idx]["texture"])
+			chosen_colors.append(GameSettings.PLAYER_SKINS[idx]["color"])
 		GameSettings.skins = chosen
+		GameSettings.skin_colors = chosen_colors
 		await get_tree().create_timer(0.4).timeout
 		get_tree().change_scene_to_file("res://scenes/Main.tscn")
 

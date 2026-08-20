@@ -11,6 +11,7 @@ const CAR_SCENE := preload("res://scenes/Car.tscn")
 @export var body_color: Color = Color(0.231, 0.435, 0.878) # fallback if player_texture is null
 @export var key_left: Key = KEY_A
 @export var key_right: Key = KEY_D
+@export var key_confirm: Key = KEY_W
 @export var player_name: String = "P1"
 
 var player_texture: Texture2D = null
@@ -57,6 +58,33 @@ const DRIFT_CONVERGE_FRAC := 0.88 # car_vx / target_vx ratio at which grip retur
 # window lets the session survive a short release before actually ending it.
 const DRIFT_RELEASE_GRACE := 0.14
 
+# Boost charges while actively drifting (is_drifting, the whole session —
+# not just drift_sliding grip loss, so weaving through a long S-turn keeps
+# charging even during the brief moments grip has already caught up).
+# Unlike a single "press to burn the whole bar" ability, boost is a
+# hold-to-drain resource: holding key_confirm drains boost_charge at
+# BOOST_DRAIN_PER_SECOND for as long as it's held and charge remains,
+# letting the player spend anywhere from a quick tap to the whole bar and
+# bank the rest for later. The speed multiplier is re-evaluated every frame
+# from the *current* charge tier (see _boost_speed_mult), so a long burn
+# starting from a full bar gets progressively weaker as it drains through
+# the tiers — the fire dying down as the tank empties. Applied to
+# current_speed() only, not elapsed itself, so the permanent difficulty
+# ramp (spawn interval, base speed growth) is unaffected once boost ends.
+const BOOST_FILL_PER_SECOND := 0.22 # ~4.5s of continuous drifting to fill from empty
+const BOOST_DRAIN_PER_SECOND := 0.35 # a full bar sustains boost for ~2.9s held continuously
+# Bar is split into three equal sections; a fuller bar gives a stronger
+# boost. Multiplier is picked by _boost_speed_mult() from boost_charge.
+const BOOST_TIER_LOW_MAX := 1.0 / 3.0
+const BOOST_TIER_MID_MAX := 2.0 / 3.0
+const BOOST_SPEED_MULT_LOW := 1.3
+const BOOST_SPEED_MULT_MID := 1.5
+const BOOST_SPEED_MULT_HIGH := 1.8
+const BOOST_FLAME_INTERVAL := 0.035
+const BOOST_BAR_WIDTH_FRAC := 0.5 # fraction of board_width
+const BOOST_BAR_HEIGHT := 9.0
+const BOOST_BAR_MARGIN_TOP := 14.0
+
 @onready var road: Road = $Road
 @onready var obstacle_container: Node2D = $ObstacleContainer
 @onready var player_car: Car = $PlayerCar
@@ -95,6 +123,34 @@ var drift_release_timer: float = 0.0 # counts down while both keys are released 
 var drift_cooldown_timer: float = 0.0
 var drift_trails: Array = [] # Line2D trails currently on screen (drifting or fading out)
 var drift_trail_sides: Dictionary = {} # side(-1.0/1.0) -> Line2D, populated only while actively drifting
+
+var boost_charge: float = 0.0 # 0..1, fills while is_drifting, drains while boost_active
+var boost_active: bool = false # true while key_confirm is held and charge remains
+var boost_flame_timer: float = 0.0
+
+func _draw() -> void:
+	var bar_w := board_width * BOOST_BAR_WIDTH_FRAC
+	var bar_h := BOOST_BAR_HEIGHT
+	var bar_x := (board_width - bar_w) * 0.5
+	var bar_y := BOOST_BAR_MARGIN_TOP
+	draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0.0, 0.0, 0.0, 0.35), true)
+	var fill_color: Color
+	if boost_active:
+		# Hotter/brighter the higher the current tier, so the fill itself
+		# communicates "this much speed right now," not just "this much fuel."
+		var heat: float = (_boost_speed_mult() - BOOST_SPEED_MULT_LOW) / (BOOST_SPEED_MULT_HIGH - BOOST_SPEED_MULT_LOW)
+		fill_color = Color(1.0, 0.55, 0.1, 0.95).lerp(Color(1.0, 0.9, 0.35, 0.95), heat)
+	elif boost_charge >= 1.0:
+		fill_color = body_color.lightened(0.35)
+	else:
+		fill_color = body_color
+	if boost_charge > 0.0:
+		draw_rect(Rect2(bar_x, bar_y, bar_w * boost_charge, bar_h), fill_color, true)
+	# Tier divider marks show players where the next speed tier unlocks.
+	for frac: float in [BOOST_TIER_LOW_MAX, BOOST_TIER_MID_MAX]:
+		var divider_x: float = bar_x + bar_w * frac
+		draw_line(Vector2(divider_x, bar_y), Vector2(divider_x, bar_y + bar_h), Color(0.0, 0.0, 0.0, 0.5), 1.0)
+	draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
 
 func _ready() -> void:
 	road.width = board_width
@@ -135,14 +191,27 @@ func start_round() -> void:
 			line.queue_free()
 	drift_trails.clear()
 	drift_trail_sides.clear()
+	boost_charge = 0.0
+	boost_active = false
+	boost_flame_timer = 0.0
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
 	road.distance = 0.0
 	road.queue_redraw()
+	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or event.echo:
+		return
+	# Boost release is handled unconditionally, bypassing the gates below —
+	# if it were gated behind is_dashing like everything else, releasing
+	# key_confirm mid-dash would get swallowed and leave boost_active stuck
+	# on (draining charge with no way to let go) until the next input event.
+	if event.keycode == key_confirm and not event.pressed:
+		boost_active = false
+		return
 	if not active or not alive or is_dashing:
 		return
-	if not (event is InputEventKey) or not event.pressed or event.echo:
+	if not event.pressed:
 		return
 	if event.keycode == key_left:
 		steer_priority = -1
@@ -158,6 +227,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		if is_drifting or car_vx < -REVERSAL_THRESHOLD:
 			_try_start_drift()
 		_register_tap(1)
+	elif event.keycode == key_confirm:
+		_try_activate_boost()
 
 func _register_tap(direction: int) -> void:
 	# Same-direction double-tap triggers a dash. Drift is triggered
@@ -201,13 +272,30 @@ func _try_start_drift() -> void:
 	drift_release_timer = DRIFT_RELEASE_GRACE
 	_begin_drift_trails()
 
+func _try_activate_boost() -> void:
+	if boost_active or boost_charge <= 0.0:
+		return
+	boost_active = true
+	boost_flame_timer = 0.0
+
+func _boost_speed_mult() -> float:
+	if boost_charge > BOOST_TIER_MID_MAX:
+		return BOOST_SPEED_MULT_HIGH
+	elif boost_charge > BOOST_TIER_LOW_MAX:
+		return BOOST_SPEED_MULT_MID
+	else:
+		return BOOST_SPEED_MULT_LOW
+
 func _car_size(kind_cfg: Dictionary) -> Vector2:
 	var lw := road.lane_width()
 	var w: float = lw * kind_cfg["width_frac"]
 	return Vector2(w, w * kind_cfg["height_frac"])
 
 func current_speed() -> float:
-	return BASE_SPEED + elapsed * SPEED_PER_SECOND
+	var s := BASE_SPEED + elapsed * SPEED_PER_SECOND
+	if boost_active:
+		s *= _boost_speed_mult()
+	return s
 
 func spawn_interval() -> float:
 	return max(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_START - elapsed * 0.015)
@@ -331,6 +419,20 @@ func _process(delta: float) -> void:
 				line.set_point_position(i, line.get_point_position(i) + Vector2(0, speed * delta))
 	drift_trails = drift_trails.filter(func(l): return is_instance_valid(l))
 
+	if boost_active:
+		boost_charge = max(0.0, boost_charge - BOOST_DRAIN_PER_SECOND * delta)
+		boost_flame_timer -= delta
+		if boost_flame_timer <= 0.0:
+			# Higher tiers burn hotter, so flames spawn more often too.
+			boost_flame_timer = BOOST_FLAME_INTERVAL / _boost_speed_mult()
+			_spawn_boost_flame(sz)
+		if boost_charge <= 0.0:
+			boost_active = false # ran out of charge; holding key_confirm does nothing further
+	elif is_drifting:
+		boost_charge = min(1.0, boost_charge + BOOST_FILL_PER_SECOND * delta)
+
+	queue_redraw()
+
 func _spawn_dash_ghost() -> void:
 	if player_car.sprite.texture == null:
 		return
@@ -345,6 +447,34 @@ func _spawn_dash_ghost() -> void:
 	var tw := create_tween()
 	tw.tween_property(ghost, "modulate:a", 0.0, 0.22)
 	tw.tween_callback(ghost.queue_free)
+
+func _spawn_boost_flame(sz: Vector2) -> void:
+	# Small procedural flame tris (no particle system, matching the rest of
+	# this project's effects) shot out from the rear of the car, tinted
+	# toward the player's own car color rather than a flat fire palette so
+	# the exhaust reads as "this player's" boost, not a generic effect.
+	# Size and heat scale with the current tier (see _boost_speed_mult) so
+	# the flame visibly dies down as a long burn drains through the tiers.
+	var heat: float = (_boost_speed_mult() - BOOST_SPEED_MULT_LOW) / (BOOST_SPEED_MULT_HIGH - BOOST_SPEED_MULT_LOW)
+	var flame := Polygon2D.new()
+	var flame_w: float = sz.x * randf_range(0.18, 0.28) * (1.0 + heat * 0.6)
+	var flame_h: float = flame_w * randf_range(1.5, 2.1)
+	flame.polygon = PackedVector2Array([
+		Vector2(-flame_w * 0.5, 0.0), Vector2(flame_w * 0.5, 0.0), Vector2(0.0, flame_h),
+	])
+	flame.color = body_color.lerp(Color(1.0, 0.45, 0.05), 0.5 + heat * 0.3)
+	var offset_x: float = randf_range(-sz.x * 0.18, sz.x * 0.18)
+	flame.position = player_car.position + Vector2(offset_x, sz.y * 0.42)
+	flame.rotation = player_car.rotation + randf_range(-0.12, 0.12)
+	flame.z_index = -1
+	add_child(flame)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(flame, "position:y", flame.position.y + flame_h * 2.4, 0.26).set_trans(Tween.TRANS_QUAD)
+	tw.tween_property(flame, "scale", Vector2(0.25, 0.25), 0.26)
+	tw.tween_property(flame, "modulate:a", 0.0, 0.26)
+	tw.set_parallel(false)
+	tw.tween_callback(flame.queue_free)
 
 func _end_drift() -> void:
 	is_drifting = false

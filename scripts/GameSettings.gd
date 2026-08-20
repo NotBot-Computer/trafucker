@@ -4,17 +4,22 @@ var player_count: int = 2
 
 # Selectable player car skins: shown in SkinSelect, then applied to the
 # player's Car in Main. Order matters for the default index (P1=0, P2=1...).
+# "color" is a flat approximation of each texture's dominant hue — used for
+# UI/effects that need a plain Color rather than a sprite (e.g. the boost
+# bar fill and boost exhaust flames in PlayerBoard.gd), since the real car
+# art is a texture, not a tintable shape.
 const PLAYER_SKINS: Array[Dictionary] = [
-	{"name": "Blue", "texture": preload("res://sprites/cars/sedan_blue.png")},
-	{"name": "Red", "texture": preload("res://sprites/cars/sedan_red.png")},
-	{"name": "Green", "texture": preload("res://sprites/cars/sedan_green.png")},
-	{"name": "Yellow", "texture": preload("res://sprites/cars/sedan_yellow.png")},
-	{"name": "Purple", "texture": preload("res://sprites/cars/sedan_purple.png")},
-	{"name": "Orange", "texture": preload("res://sprites/cars/sedan_orange.png")},
+	{"name": "Blue", "texture": preload("res://sprites/cars/sedan_blue.png"), "color": Color(0.25, 0.48, 0.92)},
+	{"name": "Red", "texture": preload("res://sprites/cars/sedan_red.png"), "color": Color(0.88, 0.22, 0.22)},
+	{"name": "Green", "texture": preload("res://sprites/cars/sedan_green.png"), "color": Color(0.24, 0.68, 0.32)},
+	{"name": "Yellow", "texture": preload("res://sprites/cars/sedan_yellow.png"), "color": Color(0.95, 0.78, 0.12)},
+	{"name": "Purple", "texture": preload("res://sprites/cars/sedan_purple.png"), "color": Color(0.58, 0.32, 0.78)},
+	{"name": "Orange", "texture": preload("res://sprites/cars/sedan_orange.png"), "color": Color(0.92, 0.52, 0.14)},
 ]
 
-# Chosen texture per player, filled in by SkinSelect before Main starts.
+# Chosen texture/color per player, filled in by SkinSelect before Main starts.
 var skins: Array[Texture2D] = [PLAYER_SKINS[0]["texture"], PLAYER_SKINS[1]["texture"]]
+var skin_colors: Array[Color] = [PLAYER_SKINS[0]["color"], PLAYER_SKINS[1]["color"]]
 
 # Traffic vehicle kinds. width_frac is a fraction of lane width; height is
 # width * height_frac (matched to each kind's real sprite aspect ratio so
