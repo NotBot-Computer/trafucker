@@ -128,28 +128,44 @@ var boost_charge: float = 0.0 # 0..1, fills while is_drifting, drains while boos
 var boost_active: bool = false # true while key_confirm is held and charge remains
 var boost_flame_timer: float = 0.0
 
+const BOOST_TIER_BOUNDS: Array[float] = [0.0, BOOST_TIER_LOW_MAX, BOOST_TIER_MID_MAX, 1.0]
+
 func _draw() -> void:
 	var bar_w := board_width * BOOST_BAR_WIDTH_FRAC
 	var bar_h := BOOST_BAR_HEIGHT
 	var bar_x := (board_width - bar_w) * 0.5
 	var bar_y := BOOST_BAR_MARGIN_TOP
 	draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(0.0, 0.0, 0.0, 0.35), true)
-	var fill_color: Color
+
 	if boost_active:
-		# Hotter/brighter the higher the current tier, so the fill itself
-		# communicates "this much speed right now," not just "this much fuel."
+		# While actively draining, the whole filled portion glows with the
+		# current tier's heat — this is the "spend" readout, distinct from
+		# the segmented "charge" readout below, so it reads as one flame
+		# rather than three separate blocks mid-burn.
 		var heat: float = (_boost_speed_mult() - BOOST_SPEED_MULT_LOW) / (BOOST_SPEED_MULT_HIGH - BOOST_SPEED_MULT_LOW)
-		fill_color = Color(1.0, 0.55, 0.1, 0.95).lerp(Color(1.0, 0.9, 0.35, 0.95), heat)
-	elif boost_charge >= 1.0:
-		fill_color = body_color.lightened(0.35)
+		var fill_color: Color = Color(1.0, 0.55, 0.1, 0.95).lerp(Color(1.0, 0.9, 0.35, 0.95), heat)
+		if boost_charge > 0.0:
+			draw_rect(Rect2(bar_x, bar_y, bar_w * boost_charge, bar_h), fill_color, true)
 	else:
-		fill_color = body_color
-	if boost_charge > 0.0:
-		draw_rect(Rect2(bar_x, bar_y, bar_w * boost_charge, bar_h), fill_color, true)
-	# Tier divider marks show players where the next speed tier unlocks.
+		# Charging: each third of the bar is its own visibly distinct block
+		# (progressively brighter shades of the player's own car color) so
+		# the three unlockable speed tiers read as actual sections, not
+		# just a plain fill with a couple of thin divider lines.
+		var tier_shades: Array[Color] = [body_color.darkened(0.15), body_color.lightened(0.2), body_color.lightened(0.55)]
+		var gap := 2.0
+		for i in range(3):
+			var seg_start: float = BOOST_TIER_BOUNDS[i]
+			var seg_end: float = BOOST_TIER_BOUNDS[i + 1]
+			var filled: float = clamp(boost_charge, seg_start, seg_end) - seg_start
+			if filled <= 0.0:
+				continue
+			var seg_x: float = bar_x + bar_w * seg_start + (0.0 if i == 0 else gap * 0.5)
+			var seg_w: float = bar_w * filled - (0.0 if i == 0 else gap * 0.5)
+			draw_rect(Rect2(seg_x, bar_y, max(seg_w, 0.0), bar_h), tier_shades[i], true)
+
 	for frac: float in [BOOST_TIER_LOW_MAX, BOOST_TIER_MID_MAX]:
 		var divider_x: float = bar_x + bar_w * frac
-		draw_line(Vector2(divider_x, bar_y), Vector2(divider_x, bar_y + bar_h), Color(0.0, 0.0, 0.0, 0.5), 1.0)
+		draw_line(Vector2(divider_x, bar_y - 1.0), Vector2(divider_x, bar_y + bar_h + 1.0), Color(0.0, 0.0, 0.0, 0.6), 1.5)
 	draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
 
 func _ready() -> void:
