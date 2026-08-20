@@ -35,8 +35,27 @@ const DRIFT_COOLDOWN := 0.3
 const DRIFT_GRIP_MULT := 0.48 # car_vx (actual momentum) approaches target this much slower
 const DRIFT_NOSE_RESPONSE := 14.0 # how fast the car's facing/tilt snaps to the input direction
 const DRIFT_MAX_TILT := 0.46 # nose can point further off than normal steering, but not extreme
-const DRIFT_MARK_INTERVAL := 0.045
 const DRIFT_MARK_OFFSET := 0.22 # fraction of car width, rear-wheel track spacing
+const DRIFT_TRAIL_WIDTH_FRAC := 0.16 # fraction of car width
+const DRIFT_TRAIL_FADE_DELAY := 0.5
+const DRIFT_TRAIL_FADE_DURATION := 0.6
+# Grip (not the whole drift session) resolves once actual momentum has
+# caught back up to the steering input, same as a real slide ending when
+# traction returns — not just when you let go of the key. Without this,
+# holding one direction after a flick keeps grip reduced forever, which
+# reads as sticky/broken rather than a deliberate, catchable slide. This
+# only affects `drift_sliding` (grip); the drift *session* (`is_drifting` —
+# trail, nose lead) still persists across direction switches and only ends
+# when both keys release, so a fresh reversal instantly re-catches the
+# slide without a cooldown gap.
+const DRIFT_CONVERGE_FRAC := 0.88 # car_vx / target_vx ratio at which grip returns to normal
+# On a real keyboard, switching steering direction is almost never a single
+# frame — there's a brief instant where both keys are released while a
+# finger moves from one key to the other. Ending the session the moment
+# target_vx hits 0 killed the trail/nose-lead every time a player tried to
+# weave, which read as "drift stops when I change direction." This grace
+# window lets the session survive a short release before actually ending it.
+const DRIFT_RELEASE_GRACE := 0.14
 
 @onready var road: Road = $Road
 @onready var obstacle_container: Node2D = $ObstacleContainer
@@ -54,6 +73,13 @@ var active: bool = false
 
 var last_tap_time: float = -999.0
 var last_tap_direction: int = 0
+# On a quick direction switch, players commonly press the new key slightly
+# before releasing the old one — both keys read held for a frame or two.
+# Treating that overlap as neutral zeroes out target_vx, which decelerates
+# the car to a dead stop mid-switch instead of carrying into the new
+# direction (this is what "drift stops when I change direction" actually
+# was). Tie-break with whichever direction was pressed most recently.
+var steer_priority: int = 0
 
 var is_dashing: bool = false
 var dash_timer: float = 0.0
@@ -63,10 +89,12 @@ var dash_direction: int = 0
 var dash_cooldown_timer: float = 0.0
 var dash_ghost_timer: float = 0.0
 
-var is_drifting: bool = false
+var is_drifting: bool = false # whole drift session: trail + nose lead, persists across direction switches
+var drift_sliding: bool = false # grip currently reduced within the session; resolves on convergence, re-arms on a fresh reversal
+var drift_release_timer: float = 0.0 # counts down while both keys are released mid-session before the session actually ends
 var drift_cooldown_timer: float = 0.0
-var drift_mark_timer: float = 0.0
-var drift_marks: Array = []
+var drift_trails: Array = [] # Line2D trails currently on screen (drifting or fading out)
+var drift_trail_sides: Dictionary = {} # side(-1.0/1.0) -> Line2D, populated only while actively drifting
 
 func _ready() -> void:
 	road.width = board_width
@@ -95,10 +123,18 @@ func start_round() -> void:
 	active = true
 	last_tap_time = -999.0
 	last_tap_direction = 0
+	steer_priority = 0
 	is_dashing = false
 	dash_cooldown_timer = 0.0
 	is_drifting = false
+	drift_sliding = false
+	drift_release_timer = 0.0
 	drift_cooldown_timer = 0.0
+	for line in drift_trails:
+		if is_instance_valid(line):
+			line.queue_free()
+	drift_trails.clear()
+	drift_trail_sides.clear()
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
 	road.distance = 0.0
 	road.queue_redraw()
@@ -109,11 +145,17 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return
 	if event.keycode == key_left:
-		if car_vx > REVERSAL_THRESHOLD:
+		steer_priority = -1
+		# Once a session is already running, any press keeps it going —
+		# the REVERSAL_THRESHOLD gate only guards the *first* entry from
+		# normal driving, where real built-up momentum is what "reversing
+		# against" means.
+		if is_drifting or car_vx > REVERSAL_THRESHOLD:
 			_try_start_drift()
 		_register_tap(-1)
 	elif event.keycode == key_right:
-		if car_vx < -REVERSAL_THRESHOLD:
+		steer_priority = 1
+		if is_drifting or car_vx < -REVERSAL_THRESHOLD:
 			_try_start_drift()
 		_register_tap(1)
 
@@ -143,10 +185,21 @@ func _try_start_dash(direction: int) -> void:
 	car_vx = 0.0
 
 func _try_start_drift() -> void:
-	if is_dashing or is_drifting or drift_cooldown_timer > 0.0:
+	if is_dashing:
+		return
+	if is_drifting:
+		# Already mid-session (e.g. weaving through an S-turn) — a fresh
+		# reversal just re-catches the slide, no cooldown needed since the
+		# trail/session never stopped.
+		drift_sliding = true
+		drift_release_timer = DRIFT_RELEASE_GRACE
+		return
+	if drift_cooldown_timer > 0.0:
 		return
 	is_drifting = true
-	drift_mark_timer = 0.0
+	drift_sliding = true
+	drift_release_timer = DRIFT_RELEASE_GRACE
+	_begin_drift_trails()
 
 func _car_size(kind_cfg: Dictionary) -> Vector2:
 	var lw := road.lane_width()
@@ -193,21 +246,41 @@ func _process(delta: float) -> void:
 		var left := Input.is_physical_key_pressed(key_left)
 		var right := Input.is_physical_key_pressed(key_right)
 		var target_vx := 0.0
-		if left and not right:
+		if left and right:
+			# Both keys read held during the brief overlap of a fast
+			# direction switch — go with whichever was pressed last instead
+			# of treating it as neutral (see steer_priority above).
+			target_vx = float(steer_priority) * MAX_STEER_SPEED
+		elif left:
 			target_vx = -MAX_STEER_SPEED
-		elif right and not left:
+		elif right:
 			target_vx = MAX_STEER_SPEED
 
-		# Drift persists as long as you keep steering in some direction —
-		# switching left/right mid-drift keeps it going. It only ends the
-		# moment you let go of both keys.
-		if is_drifting and target_vx == 0.0:
-			is_drifting = false
-			drift_cooldown_timer = DRIFT_COOLDOWN
+		# The drift session persists as long as you keep steering in some
+		# direction — switching left/right mid-drift keeps it going. It ends
+		# once both keys have stayed released for DRIFT_RELEASE_GRACE, not
+		# the instant they do — a brief release while a finger travels from
+		# one key to the other shouldn't cut the session short.
+		if is_drifting:
+			if target_vx == 0.0:
+				drift_release_timer -= delta
+				if drift_release_timer <= 0.0:
+					_end_drift()
+			else:
+				drift_release_timer = DRIFT_RELEASE_GRACE
 
-		var grip := STEER_RESPONSE * (DRIFT_GRIP_MULT if is_drifting else 1.0)
+		var grip := STEER_RESPONSE * (DRIFT_GRIP_MULT if drift_sliding else 1.0)
 		var approach := 1.0 - exp(-grip * delta)
 		car_vx += (target_vx - car_vx) * approach
+
+		# Grip alone (not the session) returns to normal once actual
+		# momentum has caught back up to the steering input — a slide
+		# that's been caught snaps back to precise control instead of
+		# staying loose for as long as you keep holding the key. If you
+		# reverse again, _try_start_drift() re-arms drift_sliding without
+		# ending the session, so the trail/nose lead never interrupts.
+		if drift_sliding and target_vx != 0.0 and sign(car_vx) == sign(target_vx) and abs(car_vx) >= abs(target_vx) * DRIFT_CONVERGE_FRAC:
+			drift_sliding = false
 
 		var shoulder := board_width * 0.06
 		var min_x := shoulder + sz.x * 0.5
@@ -228,10 +301,7 @@ func _process(delta: float) -> void:
 			var nose_target: float = sign(target_vx) * DRIFT_MAX_TILT if target_vx != 0.0 else player_car.rotation
 			tilt = move_toward(player_car.rotation, nose_target, DRIFT_NOSE_RESPONSE * delta)
 
-			drift_mark_timer -= delta
-			if drift_mark_timer <= 0.0:
-				drift_mark_timer = DRIFT_MARK_INTERVAL
-				_spawn_drift_mark(sz.x)
+			_update_drift_trails(sz.x)
 		else:
 			tilt = clamp(car_vx / MAX_STEER_SPEED, -1.0, 1.0) * MAX_TILT
 
@@ -255,10 +325,11 @@ func _process(delta: float) -> void:
 		if child.position.y > board_height + 140.0:
 			child.queue_free()
 
-	for mark in drift_marks:
-		if is_instance_valid(mark):
-			mark.position.y += speed * delta
-	drift_marks = drift_marks.filter(func(m): return is_instance_valid(m))
+	for line in drift_trails:
+		if is_instance_valid(line):
+			for i in line.get_point_count():
+				line.set_point_position(i, line.get_point_position(i) + Vector2(0, speed * delta))
+	drift_trails = drift_trails.filter(func(l): return is_instance_valid(l))
 
 func _spawn_dash_ghost() -> void:
 	if player_car.sprite.texture == null:
@@ -275,23 +346,44 @@ func _spawn_dash_ghost() -> void:
 	tw.tween_property(ghost, "modulate:a", 0.0, 0.22)
 	tw.tween_callback(ghost.queue_free)
 
-func _spawn_drift_mark(car_w: float) -> void:
-	var sz := _car_size(PLAYER_KIND)
-	var mark_size := Vector2(sz.x * 0.16, sz.y * 0.32)
-	var rear_y: float = player_car.position.y + sz.y * 0.28
-	for side in [-1.0, 1.0]:
-		var mark := ColorRect.new()
-		mark.color = Color(0.05, 0.05, 0.05, 0.7)
-		mark.size = mark_size
-		var mark_x: float = player_car.position.x + side * car_w * DRIFT_MARK_OFFSET
-		mark.position = Vector2(mark_x, rear_y) - mark_size * 0.5
-		mark.z_index = -2
-		add_child(mark)
-		drift_marks.append(mark)
+func _end_drift() -> void:
+	is_drifting = false
+	drift_sliding = false
+	drift_cooldown_timer = DRIFT_COOLDOWN
+	for side in drift_trail_sides.keys():
+		var line: Line2D = drift_trail_sides[side]
 		var tw := create_tween()
-		tw.tween_interval(0.5)
-		tw.tween_property(mark, "modulate:a", 0.0, 0.6)
-		tw.tween_callback(mark.queue_free)
+		tw.tween_interval(DRIFT_TRAIL_FADE_DELAY)
+		tw.tween_property(line, "modulate:a", 0.0, DRIFT_TRAIL_FADE_DURATION)
+		tw.tween_callback(line.queue_free)
+	drift_trail_sides.clear()
+
+func _begin_drift_trails() -> void:
+	var sz := _car_size(PLAYER_KIND)
+	for side in [-1.0, 1.0]:
+		var line := Line2D.new()
+		line.width = sz.x * DRIFT_TRAIL_WIDTH_FRAC
+		line.default_color = Color(0.05, 0.05, 0.05, 0.7)
+		line.joint_mode = Line2D.LINE_JOINT_ROUND
+		line.begin_cap_mode = Line2D.LINE_CAP_ROUND
+		line.end_cap_mode = Line2D.LINE_CAP_ROUND
+		line.antialiased = true
+		line.z_index = -2
+		add_child(line)
+		drift_trails.append(line)
+		drift_trail_sides[side] = line
+	# Lay down the first point immediately so a drift that ends within a
+	# single frame still leaves a visible dot rather than a bare line with
+	# no points.
+	_update_drift_trails(sz.x)
+
+func _update_drift_trails(car_w: float) -> void:
+	var sz := _car_size(PLAYER_KIND)
+	var rear_y: float = player_car.position.y + sz.y * 0.28
+	for side in drift_trail_sides.keys():
+		var line: Line2D = drift_trail_sides[side]
+		var mark_x: float = player_car.position.x + side * car_w * DRIFT_MARK_OFFSET
+		line.add_point(Vector2(mark_x, rear_y))
 
 func _spawn_obstacle() -> void:
 	var used_lanes: Array = []
