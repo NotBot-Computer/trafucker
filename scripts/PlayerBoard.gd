@@ -501,6 +501,9 @@ func _spawn_boost_flame(sz: Vector2) -> void:
 	# the exhaust reads as "this player's" boost, not a generic effect.
 	# Size and heat scale with the current tier (see _boost_speed_mult) so
 	# the flame visibly dies down as a long burn drains through the tiers.
+	# The hot core is the player's own hue pushed to full brightness (not a
+	# fixed fire-orange) so e.g. the yellow car's boost reads as yellow, the
+	# blue car's as blue, etc. — each player's flame stays recognizably theirs.
 	var heat: float = (_boost_speed_mult() - BOOST_SPEED_MULT_LOW) / (BOOST_SPEED_MULT_HIGH - BOOST_SPEED_MULT_LOW)
 	var flame := Polygon2D.new()
 	var flame_w: float = sz.x * randf_range(0.18, 0.28) * (1.0 + heat * 0.6)
@@ -508,7 +511,8 @@ func _spawn_boost_flame(sz: Vector2) -> void:
 	flame.polygon = PackedVector2Array([
 		Vector2(-flame_w * 0.5, 0.0), Vector2(flame_w * 0.5, 0.0), Vector2(0.0, flame_h),
 	])
-	flame.color = body_color.lerp(Color(1.0, 0.45, 0.05), 0.5 + heat * 0.3)
+	var hot_core: Color = Color.from_hsv(body_color.h, body_color.s, 1.0)
+	flame.color = body_color.lerp(hot_core, 0.35 + heat * 0.35)
 	var offset_x: float = randf_range(-sz.x * 0.18, sz.x * 0.18)
 	flame.position = player_car.position + Vector2(offset_x, sz.y * 0.42)
 	flame.rotation = player_car.rotation + randf_range(-0.12, 0.12)
