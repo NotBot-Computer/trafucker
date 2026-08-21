@@ -4,6 +4,7 @@ class_name PlayerBoard
 signal crashed
 
 const CAR_SCENE := preload("res://scenes/Car.tscn")
+const SKILL_PICKUP_SCENE := preload("res://scenes/SkillPickup.tscn")
 
 @export var board_width: float = 360.0
 @export var board_height: float = 620.0
@@ -12,6 +13,8 @@ const CAR_SCENE := preload("res://scenes/Car.tscn")
 @export var key_left: Key = KEY_A
 @export var key_right: Key = KEY_D
 @export var key_confirm: Key = KEY_W
+@export var key_skill_opponent: Key = KEY_Q
+@export var key_skill_self: Key = KEY_E
 @export var player_name: String = "P1"
 
 var player_texture: Texture2D = null
@@ -47,6 +50,26 @@ const LANE_CHANGE_INDICATOR_WARNING := 1.3 # seconds of blinking before the car 
 const LANE_CHANGE_DURATION := 0.5 # seconds spent sliding into the new lane
 const LANE_CHANGE_INDICATOR_TAIL := 0.3 # keeps blinking this long after settling, like a real signal
 const LANE_CHANGE_SAFE_GAP := 200.0 # min |dy| to another car already claiming the target lane
+
+# Skill pickups: a rare glowing collectible (see SkillPickup.gd) that scrolls
+# down the road at exactly the road's own scroll rate (speed_mult 1.0 — it's
+# a fixed marking, not a vehicle with its own pace). Driving over one doesn't
+# grant an actual skill yet — no skills are implemented — this is just the
+# pickup + choice plumbing. The round never pauses for it: two glowing choice
+# icons appear flanking the car (left = a skill that affects opponents, right
+# = a skill that benefits the player themself) and the player taps a
+# dedicated key (key_skill_opponent / key_skill_self, deliberately separate
+# from steering) to pick one while still driving normally. The choice does
+# not expire — it stays up indefinitely until picked, and only ever changes
+# by driving over a new pickup (which currently just re-triggers the same
+# generic choice; once real skills exist this is where a fresh pair would
+# replace the old one). See _resolve_skill_choice for the (currently stub)
+# hook where real skill effects belong once they're designed.
+const SKILL_PICKUP_INTERVAL_MIN := 9.0
+const SKILL_PICKUP_INTERVAL_MAX := 15.0
+const SKILL_PICKUP_RADIUS_FRAC := 0.34 # fraction of lane width
+const SKILL_ICON_RADIUS_FRAC := 0.4 # fraction of lane width
+const SKILL_ICON_OFFSET_FRAC := 1.15 # fraction of car width, icon distance from car center
 
 const TAP_WINDOW := 0.28 # max gap between taps to count as back-to-back
 
@@ -152,6 +175,10 @@ var boost_charge: float = 0.0 # 0..1, fills while is_drifting, drains while boos
 var boost_active: bool = false # true while key_confirm is held and charge remains
 var boost_flame_timer: float = 0.0
 
+var skill_pickup_timer: float = 0.0
+var choosing_skill: bool = false # true while a skill choice is up (round keeps running)
+var skill_choice_pulse: float = 0.0 # drives the choice icons' breathing glow
+
 const BOOST_TIER_BOUNDS: Array[float] = [0.0, BOOST_TIER_LOW_MAX, BOOST_TIER_MID_MAX, 1.0]
 
 func _draw() -> void:
@@ -191,6 +218,33 @@ func _draw() -> void:
 		var divider_x: float = bar_x + bar_w * frac
 		draw_line(Vector2(divider_x, bar_y - 1.0), Vector2(divider_x, bar_y + bar_h + 1.0), Color(0.0, 0.0, 0.0, 0.6), 1.5)
 	draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
+
+	if choosing_skill:
+		_draw_skill_choice()
+
+func _draw_skill_choice() -> void:
+	var sz := _car_size(PLAYER_KIND)
+	var icon_r: float = road.lane_width() * SKILL_ICON_RADIUS_FRAC
+	var offset_x: float = sz.x * SKILL_ICON_OFFSET_FRAC + icon_r
+	var center_y: float = player_car.position.y
+	var pulse: float = 0.9 + 0.1 * sin(skill_choice_pulse * 4.0)
+
+	var left_x: float = clamp(player_car.position.x - offset_x, icon_r, board_width - icon_r)
+	var right_x: float = clamp(player_car.position.x + offset_x, icon_r, board_width - icon_r)
+	_draw_skill_icon(Vector2(left_x, center_y), icon_r * pulse, Color(0.92, 0.28, 0.28), OS.get_keycode_string(key_skill_opponent), false)
+	_draw_skill_icon(Vector2(right_x, center_y), icon_r * pulse, Color(0.32, 0.82, 0.42), OS.get_keycode_string(key_skill_self), true)
+
+func _draw_skill_icon(center: Vector2, r: float, color: Color, key_label: String, is_self: bool) -> void:
+	draw_circle(center, r * 1.6, Color(color.r, color.g, color.b, 0.18))
+	draw_circle(center, r, Color(color.r, color.g, color.b, 0.95))
+	draw_circle(center, r, Color(1.0, 1.0, 1.0, 0.55), false, 2.0)
+	# Simple glyph: "+" reads as a buff for the self choice, a lone "-" reads
+	# as a debuff aimed at opponents — no icon art needed yet.
+	draw_line(center + Vector2(-r * 0.4, 0), center + Vector2(r * 0.4, 0), Color.WHITE, 3.0)
+	if is_self:
+		draw_line(center + Vector2(0, -r * 0.4), center + Vector2(0, r * 0.4), Color.WHITE, 3.0)
+	var font := ThemeDB.fallback_font
+	draw_string(font, Vector2(center.x - 40.0, center.y + r + 22.0), key_label, HORIZONTAL_ALIGNMENT_CENTER, 80.0, 14, Color.WHITE)
 
 func _ready() -> void:
 	road.width = board_width
@@ -239,6 +293,9 @@ func start_round() -> void:
 	boost_charge = 0.0
 	boost_active = false
 	boost_flame_timer = 0.0
+	skill_pickup_timer = randf_range(SKILL_PICKUP_INTERVAL_MIN, SKILL_PICKUP_INTERVAL_MAX)
+	choosing_skill = false
+	skill_choice_pulse = 0.0
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
 	road.distance = 0.0
 	road.queue_redraw()
@@ -254,9 +311,22 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.keycode == key_confirm and not event.pressed:
 		boost_active = false
 		return
-	if not active or not alive or is_dashing:
+	if not active or not alive:
 		return
 	if not event.pressed:
+		return
+	# Skill-choice keys are deliberately separate from steering (key_left/
+	# key_right) so picking one never interrupts driving — the round keeps
+	# running the whole time, this is just a second input the player can tap
+	# whenever it's convenient. Checked before the is_dashing gate below
+	# since there's no reason a dash in progress should block a skill pick.
+	if choosing_skill and event.keycode == key_skill_opponent:
+		_resolve_skill_choice("opponent")
+		return
+	if choosing_skill and event.keycode == key_skill_self:
+		_resolve_skill_choice("self")
+		return
+	if is_dashing:
 		return
 	if event.keycode == key_left:
 		steer_priority = -1
@@ -317,6 +387,21 @@ func _try_start_drift() -> void:
 	drift_release_timer = DRIFT_RELEASE_GRACE
 	_begin_drift_trails()
 
+func _collect_skill_pickup(pickup: SkillPickup) -> void:
+	pickup.queue_free()
+	# Also covers running over a second pickup before resolving the first —
+	# the choice just re-triggers (resets the glow pulse) rather than
+	# stacking or being ignored, since it never expired in the first place.
+	choosing_skill = true
+	skill_choice_pulse = 0.0
+
+# Stub — no skills are implemented yet, this is just the system's hook
+# point. category is "opponent" (left icon/key) or "self" (right icon/key).
+# Wire real skill selection/application in here once actual skills exist.
+func _resolve_skill_choice(category: String) -> void:
+	print("%s picked a %s skill (not implemented yet)" % [player_name, category])
+	choosing_skill = false
+
 func _try_activate_boost() -> void:
 	if boost_active or boost_charge <= 0.0:
 		return
@@ -353,6 +438,13 @@ func _process(delta: float) -> void:
 		dash_cooldown_timer -= delta
 	if drift_cooldown_timer > 0.0:
 		drift_cooldown_timer -= delta
+	if choosing_skill:
+		# The round never pauses for a skill choice and it never expires —
+		# only the icons' glow keeps animating here; steering, traffic, and
+		# everything else below runs exactly as normal for the rest of this
+		# function. choosing_skill only clears in _resolve_skill_choice, once
+		# the player actually picks one.
+		skill_choice_pulse += delta
 
 	var sz := _car_size(PLAYER_KIND)
 	var tilt: float
@@ -450,6 +542,11 @@ func _process(delta: float) -> void:
 	if spawn_timer <= 0.0:
 		spawn_timer = spawn_interval()
 		_spawn_obstacle()
+
+	skill_pickup_timer -= delta
+	if skill_pickup_timer <= 0.0:
+		skill_pickup_timer = randf_range(SKILL_PICKUP_INTERVAL_MIN, SKILL_PICKUP_INTERVAL_MAX)
+		_spawn_skill_pickup()
 
 	var speed := current_speed()
 	for child in obstacle_container.get_children():
@@ -565,11 +662,19 @@ func _update_drift_trails(car_w: float) -> void:
 		var mark_x: float = player_car.position.x + side * car_w * DRIFT_MARK_OFFSET
 		line.add_point(Vector2(mark_x, rear_y))
 
-func _spawn_obstacle() -> void:
-	var used_lanes: Array = []
+# Shared by traffic spawning and skill-pickup spawning so neither ever drops
+# a new node into a lane something else already occupies near the top of the
+# board — pickups and traffic both live in obstacle_container and both set
+# a "lane" meta key, so this one scan covers both kinds of children.
+func _lanes_used_near_top() -> Array:
+	var used: Array = []
 	for child in obstacle_container.get_children():
 		if child.position.y < 190.0:
-			used_lanes.append(child.get_meta("lane"))
+			used.append(child.get_meta("lane"))
+	return used
+
+func _spawn_obstacle() -> void:
+	var used_lanes := _lanes_used_near_top()
 	var available: Array = []
 	for lane in range(lane_count):
 		if not used_lanes.has(lane):
@@ -591,6 +696,27 @@ func _spawn_obstacle() -> void:
 	obstacle.set_meta("speed_mult", randf_range(frac_min, frac_max))
 	obstacle.position = Vector2(road.lane_center_x(lane), -sz.y - 40.0 - vertical_margin)
 	_maybe_flag_lane_change(obstacle)
+
+func _spawn_skill_pickup() -> void:
+	var used_lanes := _lanes_used_near_top()
+	var available: Array = []
+	for lane in range(lane_count):
+		if not used_lanes.has(lane):
+			available.append(lane)
+	if available.is_empty():
+		return
+
+	var lane: int = available[randi() % available.size()]
+	var pickup: SkillPickup = SKILL_PICKUP_SCENE.instantiate()
+	obstacle_container.add_child(pickup)
+	pickup.set_radius(road.lane_width() * SKILL_PICKUP_RADIUS_FRAC)
+	pickup.set_meta("lane", lane)
+	# Scrolls at exactly the road's own rate (a fixed marking), not a
+	# vehicle's own forward speed — see the TRAFFIC_KINDS speed_frac comment
+	# in GameSettings.gd for why 1.0 would be wrong for an actual vehicle,
+	# but is exactly right for something painted on/embedded in the road.
+	pickup.set_meta("speed_mult", 1.0)
+	pickup.position = Vector2(road.lane_center_x(lane), -pickup.radius - 40.0 - vertical_margin)
 
 func _maybe_flag_lane_change(obstacle) -> void:
 	if lane_count <= 1:
@@ -698,7 +824,10 @@ func _pick_traffic_kind() -> Dictionary:
 			return k
 	return kinds[0]
 
-func _on_player_area_entered(_area: Area2D) -> void:
+func _on_player_area_entered(area: Area2D) -> void:
+	if area is SkillPickup:
+		_collect_skill_pickup(area)
+		return
 	if not alive:
 		return
 	alive = false

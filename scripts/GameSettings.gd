@@ -120,9 +120,17 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 
 # One steering + confirm binding per player slot. Keeps 4 players on a single
 # keyboard: three WASD-shaped clusters (A/D+W, F/H+T, J/L+I) plus arrows.
+# skill_opponent/skill_self are the two skill-choice-pickup buttons (see
+# PlayerBoard.gd) — deliberately separate keys from steering, not reused
+# left/right, since a skill choice never pauses driving. This project targets
+# PS5 eventually (steering -> stick, skill_opponent/self -> a pair of
+# shoulder/face buttons), so these keyboard bindings are just a placeholder
+# stand-in and don't need to be especially ergonomic — chosen to flank each
+# player's own confirm key on the keyboard (Q/W/E, ,/Up/., R/T/Y, U/I/O) only
+# as a mnemonic, not because that positioning matters long-term.
 const PLAYER_CONFIGS: Array[Dictionary] = [
-	{"name": "P1", "left": KEY_A, "right": KEY_D, "confirm": KEY_W, "steer_label": "A / D", "confirm_label": "W"},
-	{"name": "P2", "left": KEY_LEFT, "right": KEY_RIGHT, "confirm": KEY_UP, "steer_label": "Left / Right", "confirm_label": "Up"},
-	{"name": "P3", "left": KEY_F, "right": KEY_H, "confirm": KEY_T, "steer_label": "F / H", "confirm_label": "T"},
-	{"name": "P4", "left": KEY_J, "right": KEY_L, "confirm": KEY_I, "steer_label": "J / L", "confirm_label": "I"},
+	{"name": "P1", "left": KEY_A, "right": KEY_D, "confirm": KEY_W, "skill_opponent": KEY_Q, "skill_self": KEY_E, "steer_label": "A / D", "confirm_label": "W"},
+	{"name": "P2", "left": KEY_LEFT, "right": KEY_RIGHT, "confirm": KEY_UP, "skill_opponent": KEY_COMMA, "skill_self": KEY_PERIOD, "steer_label": "Left / Right", "confirm_label": "Up"},
+	{"name": "P3", "left": KEY_F, "right": KEY_H, "confirm": KEY_T, "skill_opponent": KEY_R, "skill_self": KEY_Y, "steer_label": "F / H", "confirm_label": "T"},
+	{"name": "P4", "left": KEY_J, "right": KEY_L, "confirm": KEY_I, "skill_opponent": KEY_U, "skill_self": KEY_O, "steer_label": "J / L", "confirm_label": "I"},
 ]

@@ -42,6 +42,8 @@ func _build_boards() -> void:
 		board.key_left = cfg["left"]
 		board.key_right = cfg["right"]
 		board.key_confirm = cfg["confirm"]
+		board.key_skill_opponent = cfg["skill_opponent"]
+		board.key_skill_self = cfg["skill_self"]
 		if i < GameSettings.skins.size():
 			board.player_texture = GameSettings.skins[i]
 		if i < GameSettings.skin_colors.size():
