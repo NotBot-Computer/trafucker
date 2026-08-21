@@ -8,6 +8,11 @@ class_name LaneDivider
 
 @export var width: float = 48.0
 @export var height: float = 620.0
+# Same purpose as Road.render_margin — extends tile coverage past [0, height]
+# so the median doesn't show bare background in the letterboxed strip that
+# appears when Main zooms the camera out to fit more players. Set directly
+# by Main._build_boards() (dividers have no PlayerBoard wrapper to go through).
+@export var render_margin: float = 0.0
 
 const MEDIAN_TEXTURE := preload("res://sprites/road/median_tile.png")
 const BASE_SPEED := 160.0
@@ -33,8 +38,13 @@ func _draw() -> void:
 	var scroll := fmod(distance, tile_h)
 
 	# Same anchoring as Road._draw(): slide toward +y (down, toward the
-	# player) so the median matches the direction traffic moves in.
+	# player) so the median matches the direction traffic moves in. See
+	# Road._draw() for why the bounds are extended by render_margin.
+	var top_edge := -render_margin
+	var bottom_edge := height + render_margin
 	var y := scroll - tile_h
-	while y < height:
+	while y > top_edge:
+		y -= tile_h
+	while y < bottom_edge:
 		draw_texture_rect(MEDIAN_TEXTURE, Rect2(0, y, width, tile_h), false)
 		y += tile_h

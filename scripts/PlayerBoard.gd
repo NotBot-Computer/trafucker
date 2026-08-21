@@ -15,6 +15,13 @@ const CAR_SCENE := preload("res://scenes/Car.tscn")
 @export var player_name: String = "P1"
 
 var player_texture: Texture2D = null
+# How far past [0, board_height] the camera can currently see (set by
+# Main._build_boards() via set_vertical_margin() whenever it has to zoom the
+# camera out to fit more players — see Road.render_margin for why). Used to
+# push obstacle spawn/despawn points out past whatever the camera can
+# actually see, so cars still pop in/out off-screen instead of appearing
+# already inside the letterboxed strip.
+var vertical_margin: float = 0.0
 
 const BASE_SPEED := 160.0
 const SPEED_PER_SECOND := 6.0
@@ -190,6 +197,11 @@ func _ready() -> void:
 	road.height = board_height
 	road.lane_count = lane_count
 	player_car.area_entered.connect(_on_player_area_entered)
+
+func set_vertical_margin(margin: float) -> void:
+	vertical_margin = margin
+	road.render_margin = margin
+	road.queue_redraw()
 
 func start_round() -> void:
 	for child in obstacle_container.get_children():
@@ -444,7 +456,7 @@ func _process(delta: float) -> void:
 		var speed_mult: float = child.get_meta("speed_mult", 1.0)
 		child.position.y += speed * speed_mult * delta
 		_update_obstacle_lane_change(child, delta)
-		if child.position.y > board_height + 140.0:
+		if child.position.y > board_height + 140.0 + vertical_margin:
 			child.queue_free()
 
 	for line in drift_trails:
@@ -573,7 +585,7 @@ func _spawn_obstacle() -> void:
 	var frac_max: float = kind_cfg.get("speed_frac_max", 0.85)
 	obstacle.set_meta("lane", lane)
 	obstacle.set_meta("speed_mult", randf_range(frac_min, frac_max))
-	obstacle.position = Vector2(road.lane_center_x(lane), -sz.y - 40.0)
+	obstacle.position = Vector2(road.lane_center_x(lane), -sz.y - 40.0 - vertical_margin)
 	_maybe_flag_lane_change(obstacle)
 
 func _maybe_flag_lane_change(obstacle) -> void:

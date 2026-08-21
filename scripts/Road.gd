@@ -4,6 +4,13 @@ class_name Road
 @export var width: float = 360.0
 @export var height: float = 620.0
 @export var lane_count: int = 5
+# How far past [0, height] to keep drawing tiles, in this board's own local
+# space. Set by Main (via PlayerBoard.set_vertical_margin) whenever the
+# camera has to zoom out to fit a wider player count — that zoom-out widens
+# the vertical slice the camera can see without changing board_height, and
+# without this margin that extra strip above/below the board shows bare
+# background instead of road.
+@export var render_margin: float = 0.0
 
 var distance: float = 0.0
 
@@ -30,7 +37,15 @@ func _draw() -> void:
 
 	# Tiles anchor just above the top edge and slide toward +y (down, toward
 	# the player) as distance grows, matching the direction traffic moves in.
+	# render_margin extends both bounds so tiling still fully covers the
+	# camera's visible area even when it sees past [0, height] (see the field
+	# comment above) — with render_margin at its default 0, this is identical
+	# to the original fixed [0, height] loop.
+	var top_edge := -render_margin
+	var bottom_edge := height + render_margin
 	var y := scroll - tile_h
-	while y < height:
+	while y > top_edge:
+		y -= tile_h
+	while y < bottom_edge:
 		draw_texture_rect(ROAD_TEXTURE, Rect2(0, y, width, tile_h), false)
 		y += tile_h

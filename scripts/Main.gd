@@ -1,7 +1,9 @@
 extends Node2D
 
 const BOARD_GAP := 48.0
-const CAMERA_ZOOM := 1.15
+const CAMERA_ZOOM := 1.15 # preferred/maximum zoom — only ever zoomed OUT from here, never in
+const BOARD_SIDE_MARGIN := 24.0 # breathing room so the outermost lane isn't flush against the screen edge
+const SCREEN_MASK_BASE_PX := 24.0 # always-on top/bottom vignette thickness, even with no letterboxing to hide
 const PLAYER_BOARD_SCENE := preload("res://scenes/PlayerBoard.tscn")
 const LANE_DIVIDER_SCENE := preload("res://scenes/LaneDivider.tscn")
 
@@ -10,6 +12,7 @@ const LANE_DIVIDER_SCENE := preload("res://scenes/LaneDivider.tscn")
 @onready var dividers_container: Node2D = $DividersContainer
 @onready var status_label: Label = $HUD/StatusLabel
 @onready var overlay: Control = $HUD/Overlay
+@onready var screen_mask: ScreenMask = $HUD/ScreenMask
 @onready var overlay_title: Label = $HUD/Overlay/OverlayTitle
 @onready var overlay_body: Label = $HUD/Overlay/OverlayBody
 
@@ -50,24 +53,50 @@ func _build_boards() -> void:
 		board_height = board.board_height
 
 	var total_width: float = count * board_width + (count - 1) * BOARD_GAP
-	var viewport_width: float = get_viewport().get_visible_rect().size.x
-	var start_x: float = max(0.0, (viewport_width - total_width) / 2.0)
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+
+	# At 2-3 players everything fits comfortably inside CAMERA_ZOOM's visible
+	# area. At 4 players total_width can exceed it, which used to clip the
+	# outermost board's edge lanes off-screen entirely. Zoom out just enough
+	# to fit every board — never zoom in past CAMERA_ZOOM, only out from it.
+	var fit_zoom: float = viewport_size.x / (total_width + BOARD_SIDE_MARGIN * 2.0)
+	var zoom: float = min(CAMERA_ZOOM, fit_zoom)
+
+	# Zooming out to fit width also widens the vertical slice the camera can
+	# see — board_height doesn't change, only how much of the camera's view
+	# falls outside it. vertical_margin is that overhang, in each board's own
+	# local space; without extending the road/median draw area and the
+	# obstacle spawn/despawn points to match, that overhang shows bare
+	# background above/below the track (see Road.render_margin).
+	var visible_height: float = viewport_size.y / zoom
+	var vertical_margin: float = max(0.0, (visible_height - board_height) / 2.0)
+
+	var start_x: float = max(0.0, (viewport_size.x - total_width) / 2.0)
 
 	var x := start_x
 	for i in range(boards.size()):
 		boards[i].position.x = x
+		boards[i].set_vertical_margin(vertical_margin)
 		x += board_width
 		if i < boards.size() - 1:
-			var divider: Node2D = LANE_DIVIDER_SCENE.instantiate()
+			var divider: LaneDivider = LANE_DIVIDER_SCENE.instantiate()
 			divider.width = BOARD_GAP
 			divider.height = board_height
+			divider.render_margin = vertical_margin
 			dividers_container.add_child(divider)
 			divider.position = Vector2(x, 0)
 			x += BOARD_GAP
 
 	camera.position = Vector2(start_x + total_width / 2.0, board_height / 2.0)
-	camera.zoom = Vector2(CAMERA_ZOOM, CAMERA_ZOOM)
+	camera.zoom = Vector2(zoom, zoom)
 	camera.make_current()
+
+	if screen_mask:
+		# Screen-space thickness: convert vertical_margin (world/board-local
+		# units) through the camera zoom back to screen pixels, plus a small
+		# constant so there's always a subtle fade even at 2-3 players where
+		# vertical_margin is 0 (nothing to hide, just polish).
+		screen_mask.set_fade_height(vertical_margin * zoom + SCREEN_MASK_BASE_PX)
 
 func _status_text() -> String:
 	var parts: Array[String] = []
