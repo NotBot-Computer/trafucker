@@ -71,6 +71,55 @@ const SKILL_PICKUP_RADIUS_FRAC := 0.34 # fraction of lane width
 const SKILL_ICON_RADIUS_FRAC := 0.4 # fraction of lane width
 const SKILL_ICON_OFFSET_FRAC := 1.15 # fraction of car width, icon distance from car center
 
+# Self skills: benefit the player who picks them. Only one exists today
+# (Tank Mode), so _resolve_skill_choice's "self" branch always grants it —
+# but it's picked from this pool rather than hardcoded so a future addition
+# just means appending another entry here, matching the random-pick-from-pool
+# pattern already used for TRAFFIC_KINDS (_pick_traffic_kind).
+const SELF_SKILLS := ["tank"]
+
+# Tank Mode: transform into an invincible tank for a limited time. The
+# player's own confirm key (key_confirm) is repurposed from boost to firing
+# a cannon shot at the nearest vehicle ahead in roughly the same lane, and
+# any traffic the tank body touches is crushed instead of ending the round.
+const TANK_TEXTURE := preload("res://sprites/cars/tank.png")
+const TANK_KIND := {"width_frac": 0.75, "height_frac": 2.06} # matches the cropped sprite's own aspect ratio, wider than a normal car
+const TANK_MODE_DURATION := 6.0
+const TANK_BAR_HEIGHT := 6.0
+const TANK_BAR_GAP := 4.0 # gap below the boost bar
+const TANK_STEER_SPEED_MULT := 0.72 # a tank steers noticeably slower/heavier than a normal car
+const TANK_DEBRIS_COUNT := 6
+const TANK_DEBRIS_DURATION := 0.28
+
+# Cannon fire animation: the muzzle flash/smoke are separate overlay sprites
+# (cropped from tank_animasyon.png, tank hull excluded) positioned at the
+# barrel tip by _fire_cannon/_play_fire_animation, rather than a single
+# composite "tank body mid-animation" texture — the source sheet's tank
+# render isn't pixel-aligned across its own cells, so treating the effect as
+# an independent layer anchored at its own bottom-center sidesteps that
+# entirely instead of fighting it. The shell (tank_shell.png) is a real
+# sprite that travels from the muzzle to its target instead of an instant
+# hit, and firing kicks the tank back with a brief speed dip (recoil) so it
+# reads as a weapon, not a free action.
+const TANK_FLASH_FRAMES := [preload("res://sprites/cars/tank_flash_1.png"), preload("res://sprites/cars/tank_flash_2.png")]
+const TANK_SMOKE_FRAMES := [preload("res://sprites/cars/tank_smoke_1.png"), preload("res://sprites/cars/tank_smoke_2.png")]
+const TANK_SHELL_TEXTURE := preload("res://sprites/cars/tank_shell.png")
+# The tank's own width, in source pixels, within the sheet these overlay
+# frames were cropped from (measured by inspection, same convention as
+# Road.SHOULDER_RATIO) — keeps the flash/smoke sized proportionate to
+# whatever the in-game tank's actual world width currently is.
+const TANK_EFFECT_SOURCE_TANK_WIDTH := 188.0
+const TANK_FLASH_FRAME_DURATION := 0.05
+const TANK_SMOKE_FRAME_DURATION := 0.09
+const TANK_SMOKE_FADE_DURATION := 0.22
+const TANK_SHELL_SPEED := 1400.0 # px/sec, how fast the fired shell sprite travels
+const TANK_SHELL_MIN_TRAVEL := 0.06
+const TANK_SHELL_MAX_TRAVEL := 0.4
+const TANK_RECOIL_KICK := 16.0 # world px the tank visually punches back on fire
+const TANK_RECOIL_RECOVERY_SPEED := 90.0 # px/sec the kick offset recovers at
+const TANK_RECOIL_DURATION := 0.3 # brief current_speed() dip synced with the kick
+const TANK_RECOIL_SPEED_MULT := 0.55
+
 const TAP_WINDOW := 0.28 # max gap between taps to count as back-to-back
 
 const DASH_DURATION := 0.14
@@ -179,6 +228,13 @@ var skill_pickup_timer: float = 0.0
 var choosing_skill: bool = false # true while a skill choice is up (round keeps running)
 var skill_choice_pulse: float = 0.0 # drives the choice icons' breathing glow
 
+var tank_mode_active: bool = false
+var tank_mode_timer: float = 0.0
+var cannon_ready: bool = true # false while a fired shell is still in flight — the shell's own travel time is the reload
+var recoil_offset: float = 0.0 # world px currently punched back along y; decays toward 0 every frame
+var recoil_timer: float = 0.0 # while > 0, current_speed() is dipped (see TANK_RECOIL_SPEED_MULT)
+var fire_anim_tween: Tween = null
+
 const BOOST_TIER_BOUNDS: Array[float] = [0.0, BOOST_TIER_LOW_MAX, BOOST_TIER_MID_MAX, 1.0]
 
 func _draw() -> void:
@@ -219,11 +275,21 @@ func _draw() -> void:
 		draw_line(Vector2(divider_x, bar_y - 1.0), Vector2(divider_x, bar_y + bar_h + 1.0), Color(0.0, 0.0, 0.0, 0.6), 1.5)
 	draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
 
+	if tank_mode_active:
+		_draw_tank_timer(bar_x, bar_y + bar_h, bar_w)
+
 	if choosing_skill:
 		_draw_skill_choice()
 
+func _draw_tank_timer(bar_x: float, bar_top: float, bar_w: float) -> void:
+	var bar_y := bar_top + TANK_BAR_GAP
+	draw_rect(Rect2(bar_x, bar_y, bar_w, TANK_BAR_HEIGHT), Color(0.0, 0.0, 0.0, 0.35), true)
+	var frac: float = clamp(tank_mode_timer / TANK_MODE_DURATION, 0.0, 1.0)
+	draw_rect(Rect2(bar_x, bar_y, bar_w * frac, TANK_BAR_HEIGHT), Color(0.42, 0.5, 0.22, 0.95), true)
+	draw_rect(Rect2(bar_x, bar_y, bar_w, TANK_BAR_HEIGHT), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
+
 func _draw_skill_choice() -> void:
-	var sz := _car_size(PLAYER_KIND)
+	var sz := _car_size(_current_kind())
 	var icon_r: float = road.lane_width() * SKILL_ICON_RADIUS_FRAC
 	var offset_x: float = sz.x * SKILL_ICON_OFFSET_FRAC + icon_r
 	var center_y: float = player_car.position.y
@@ -238,11 +304,20 @@ func _draw_skill_icon(center: Vector2, r: float, color: Color, key_label: String
 	draw_circle(center, r * 1.6, Color(color.r, color.g, color.b, 0.18))
 	draw_circle(center, r, Color(color.r, color.g, color.b, 0.95))
 	draw_circle(center, r, Color(1.0, 1.0, 1.0, 0.55), false, 2.0)
-	# Simple glyph: "+" reads as a buff for the self choice, a lone "-" reads
-	# as a debuff aimed at opponents — no icon art needed yet.
-	draw_line(center + Vector2(-r * 0.4, 0), center + Vector2(r * 0.4, 0), Color.WHITE, 3.0)
 	if is_self:
-		draw_line(center + Vector2(0, -r * 0.4), center + Vector2(0, r * 0.4), Color.WHITE, 3.0)
+		# Tank Mode is the only self skill so far, so its own pixel art
+		# doubles as the choice glyph — once SELF_SKILLS has more than one
+		# entry, this should show whichever skill the pool would actually
+		# grant rather than always the tank.
+		var tex_size: Vector2 = TANK_TEXTURE.get_size()
+		var icon_h: float = r * 1.5
+		var icon_w: float = icon_h * (tex_size.x / tex_size.y)
+		var icon_rect := Rect2(center - Vector2(icon_w, icon_h) * 0.5, Vector2(icon_w, icon_h))
+		draw_texture_rect(TANK_TEXTURE, icon_rect, false)
+	else:
+		# Simple glyph: a lone "-" reads as a debuff aimed at opponents — no
+		# opponent skill (or its icon art) exists yet.
+		draw_line(center + Vector2(-r * 0.4, 0), center + Vector2(r * 0.4, 0), Color.WHITE, 3.0)
 	var font := ThemeDB.fallback_font
 	draw_string(font, Vector2(center.x - 40.0, center.y + r + 22.0), key_label, HORIZONTAL_ALIGNMENT_CENTER, 80.0, 14, Color.WHITE)
 
@@ -296,6 +371,16 @@ func start_round() -> void:
 	skill_pickup_timer = randf_range(SKILL_PICKUP_INTERVAL_MIN, SKILL_PICKUP_INTERVAL_MAX)
 	choosing_skill = false
 	skill_choice_pulse = 0.0
+	tank_mode_active = false
+	tank_mode_timer = 0.0
+	cannon_ready = true
+	recoil_offset = 0.0
+	recoil_timer = 0.0
+	if fire_anim_tween != null and fire_anim_tween.is_valid():
+		fire_anim_tween.kill()
+	if fire_effect_sprite != null and is_instance_valid(fire_effect_sprite):
+		fire_effect_sprite.queue_free()
+	fire_effect_sprite = null
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
 	road.distance = 0.0
 	road.queue_redraw()
@@ -343,7 +428,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			_try_start_drift()
 		_register_tap(1)
 	elif event.keycode == key_confirm:
-		_try_activate_boost()
+		# Tank Mode repurposes the confirm key entirely: it fires the cannon
+		# instead of spending boost charge for the whole time the transform
+		# is active (see _fire_cannon / _activate_tank_mode).
+		if tank_mode_active:
+			_fire_cannon()
+		else:
+			_try_activate_boost()
 
 func _register_tap(direction: int) -> void:
 	# Same-direction double-tap triggers a dash. Drift is triggered
@@ -358,7 +449,7 @@ func _register_tap(direction: int) -> void:
 func _try_start_dash(direction: int) -> void:
 	if is_dashing or is_drifting or dash_cooldown_timer > 0.0:
 		return
-	var sz := _car_size(PLAYER_KIND)
+	var sz := _car_size(_current_kind())
 	var shoulder := board_width * 0.06
 	var min_x := shoulder + sz.x * 0.5
 	var max_x := board_width - shoulder - sz.x * 0.5
@@ -395,12 +486,17 @@ func _collect_skill_pickup(pickup: SkillPickup) -> void:
 	choosing_skill = true
 	skill_choice_pulse = 0.0
 
-# Stub — no skills are implemented yet, this is just the system's hook
-# point. category is "opponent" (left icon/key) or "self" (right icon/key).
-# Wire real skill selection/application in here once actual skills exist.
+# category is "opponent" (left icon/key) or "self" (right icon/key). Opponent
+# skills are still an unimplemented stub — this is the hook point for them
+# once they're designed. Self skills are picked from SELF_SKILLS.
 func _resolve_skill_choice(category: String) -> void:
-	print("%s picked a %s skill (not implemented yet)" % [player_name, category])
 	choosing_skill = false
+	if category == "self":
+		var skill: String = SELF_SKILLS[randi() % SELF_SKILLS.size()]
+		if skill == "tank":
+			_activate_tank_mode()
+	else:
+		print("%s picked an opponent skill (not implemented yet)" % player_name)
 
 func _try_activate_boost() -> void:
 	if boost_active or boost_charge <= 0.0:
@@ -416,15 +512,209 @@ func _boost_speed_mult() -> float:
 	else:
 		return BOOST_SPEED_MULT_LOW
 
+func _activate_tank_mode() -> void:
+	# Re-triggering while already active (e.g. picking "self" again before
+	# the timer runs out) just refreshes the full duration rather than
+	# stacking — same "re-trigger, don't stack" rule the pickup itself
+	# already follows for a re-collected choice (see _collect_skill_pickup).
+	tank_mode_active = true
+	tank_mode_timer = TANK_MODE_DURATION
+	var sz := _car_size(TANK_KIND)
+	player_car.set_size(sz.x, sz.y)
+	player_car.set_texture(TANK_TEXTURE)
+
+func _deactivate_tank_mode() -> void:
+	tank_mode_active = false
+	cannon_ready = true
+	recoil_offset = 0.0
+	recoil_timer = 0.0
+	if fire_anim_tween != null and fire_anim_tween.is_valid():
+		fire_anim_tween.kill()
+	# Killing the tween above skips its final callback (_fade_out_fire_effect),
+	# so if the transform ends mid-flash/mid-smoke the sprite would otherwise
+	# never get freed — it'd just sit on screen forever, surviving even a
+	# round restart, since nothing else ever revisits a stray child node here.
+	if fire_effect_sprite != null and is_instance_valid(fire_effect_sprite):
+		fire_effect_sprite.queue_free()
+	fire_effect_sprite = null
+	var sz := _car_size(PLAYER_KIND)
+	player_car.set_size(sz.x, sz.y)
+	if player_texture != null:
+		player_car.set_texture(player_texture)
+
+func _muzzle_position() -> Vector2:
+	return player_car.position + Vector2(0.0, -_car_size(TANK_KIND).y * 0.5)
+
+# Cannon fire: destroys the nearest vehicle ahead (smaller y — the direction
+# traffic scrolls in from) roughly in the same lane as the player. "Roughly"
+# because the player's own steering is momentum-based, not lane-snapped (see
+# CLAUDE.md/PROJECT_STATE), so there's no lane index to match against
+# directly — a half-lane-width x tolerance stands in for "same lane" instead.
+# Gated by cannon_ready (cleared here, restored once the fired shell lands —
+# see _spawn_shell) so mashing the key can't overlap shots.
+func _fire_cannon() -> void:
+	if not cannon_ready:
+		return
+	var target := _find_cannon_target()
+	cannon_ready = false
+	recoil_offset = TANK_RECOIL_KICK
+	recoil_timer = TANK_RECOIL_DURATION
+	_play_fire_animation()
+	_spawn_shell(target)
+
+func _find_cannon_target() -> Car:
+	var half_lane: float = road.lane_width() * 0.5
+	var target: Car = null
+	var best_dy := INF
+	for child in obstacle_container.get_children():
+		if not (child is Car):
+			continue
+		if child.position.y >= player_car.position.y:
+			continue
+		if abs(child.position.x - player_car.position.x) > half_lane:
+			continue
+		var dy: float = player_car.position.y - child.position.y
+		if dy < best_dy:
+			best_dy = dy
+			target = child
+	return target
+
+# Shared by cannon hits and tank-mode collisions ("crushed" instead of
+# ending the round) — both are just "this traffic Car goes away with a
+# burst of debris", the only difference is what triggers it.
+func _destroy_vehicle(vehicle: Car) -> void:
+	_spawn_debris(vehicle.position, vehicle.width)
+	vehicle.queue_free()
+
+# Muzzle flash -> smoke, played as a sequence of standalone overlay sprites
+# (not part of the tank's own texture — see the TANK_FLASH_FRAMES/
+# TANK_SMOKE_FRAMES comment) positioned at the barrel tip every step, so it
+# stays glued to the tank through the recoil kick and fades out on its own
+# rather than blocking the next shot.
+func _play_fire_animation() -> void:
+	if fire_anim_tween != null and fire_anim_tween.is_valid():
+		fire_anim_tween.kill()
+	fire_anim_tween = create_tween()
+	for frame in TANK_FLASH_FRAMES:
+		fire_anim_tween.tween_callback(_show_fire_effect_frame.bind(frame))
+		fire_anim_tween.tween_interval(TANK_FLASH_FRAME_DURATION)
+	for frame in TANK_SMOKE_FRAMES:
+		fire_anim_tween.tween_callback(_show_fire_effect_frame.bind(frame))
+		fire_anim_tween.tween_interval(TANK_SMOKE_FRAME_DURATION)
+	fire_anim_tween.tween_callback(_fade_out_fire_effect)
+
+var fire_effect_sprite: Sprite2D = null
+
+func _show_fire_effect_frame(frame: Texture2D) -> void:
+	if not tank_mode_active:
+		return
+	if fire_effect_sprite == null or not is_instance_valid(fire_effect_sprite):
+		fire_effect_sprite = Sprite2D.new()
+		fire_effect_sprite.z_index = 5
+		add_child(fire_effect_sprite)
+	var tex_size: Vector2 = frame.get_size()
+	var fire_scale: float = _car_size(TANK_KIND).x / TANK_EFFECT_SOURCE_TANK_WIDTH
+	fire_effect_sprite.texture = frame
+	fire_effect_sprite.scale = Vector2(fire_scale, fire_scale)
+	fire_effect_sprite.modulate.a = 1.0
+	# Anchors the frame's own bottom-center (where it meets the barrel) at
+	# the node's position instead of the frame's geometric center — offset
+	# is in local pre-scale pixels, so this holds regardless of fire_scale.
+	fire_effect_sprite.offset = Vector2(0.0, -tex_size.y * 0.5)
+	fire_effect_sprite.position = _muzzle_position()
+
+func _fade_out_fire_effect() -> void:
+	if fire_effect_sprite == null or not is_instance_valid(fire_effect_sprite):
+		return
+	var sprite := fire_effect_sprite
+	fire_effect_sprite = null
+	var tw := create_tween()
+	tw.tween_property(sprite, "modulate:a", 0.0, TANK_SMOKE_FADE_DURATION)
+	tw.tween_callback(sprite.queue_free)
+
+# The shell is a real traveling sprite, not an instant hit — it flies from
+# the muzzle to the target (or off the top of the board if the cannon
+# whiffed) and only destroys the target on arrival, so cause and effect read
+# clearly instead of the vehicle vanishing the instant the key is pressed.
+# cannon_ready is restored here (not when the fire animation ends), so the
+# shell's own travel time is effectively the cannon's reload.
+func _spawn_shell(target: Car) -> void:
+	var shell := Sprite2D.new()
+	shell.texture = TANK_SHELL_TEXTURE
+	var tex_size: Vector2 = TANK_SHELL_TEXTURE.get_size()
+	var shell_world_h: float = _car_size(TANK_KIND).x * 0.5
+	var shell_scale: float = shell_world_h / tex_size.y
+	shell.scale = Vector2(shell_scale, shell_scale)
+	shell.z_index = 4
+	shell.position = _muzzle_position()
+	add_child(shell)
+
+	var end_pos: Vector2
+	if target != null and is_instance_valid(target):
+		end_pos = target.position
+	else:
+		end_pos = Vector2(player_car.position.x, -_car_size(TANK_KIND).y - 40.0 - vertical_margin)
+
+	# The shell's own art points "up" (angle -PI/2), so rotate it to face
+	# wherever it's actually travelling rather than always straight up —
+	# matters when the target isn't perfectly x-aligned with the muzzle.
+	var travel_dir: Vector2 = end_pos - shell.position
+	if travel_dir.length() > 0.001:
+		shell.rotation = travel_dir.angle() + PI * 0.5
+
+	var travel_dist: float = shell.position.distance_to(end_pos)
+	var duration: float = clamp(travel_dist / TANK_SHELL_SPEED, TANK_SHELL_MIN_TRAVEL, TANK_SHELL_MAX_TRAVEL)
+	var tw := create_tween()
+	tw.tween_property(shell, "position", end_pos, duration)
+	tw.tween_callback(_on_shell_arrived.bind(shell, target))
+
+func _on_shell_arrived(shell: Sprite2D, target: Car) -> void:
+	shell.queue_free()
+	cannon_ready = true
+	if target != null and is_instance_valid(target):
+		_destroy_vehicle(target)
+
+# Small procedural debris burst (same technique as the boost exhaust flames:
+# a handful of tweened Polygon2D chips, no particle system/new art) fired
+# outward from wherever a vehicle was destroyed.
+func _spawn_debris(pos: Vector2, vehicle_w: float) -> void:
+	for i in range(TANK_DEBRIS_COUNT):
+		var s: float = vehicle_w * randf_range(0.12, 0.22)
+		var chip := Polygon2D.new()
+		chip.polygon = PackedVector2Array([Vector2(-s, -s), Vector2(s, -s), Vector2(0.0, s)])
+		chip.color = Color(0.25, 0.22, 0.2, 0.95).lerp(Color(1.0, 0.55, 0.15, 0.95), randf())
+		chip.position = pos
+		chip.rotation = randf_range(0.0, TAU)
+		chip.z_index = 6
+		add_child(chip)
+		var dir := Vector2.from_angle(randf_range(0.0, TAU))
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(chip, "position", pos + dir * vehicle_w * 1.4, TANK_DEBRIS_DURATION).set_trans(Tween.TRANS_QUAD)
+		tw.tween_property(chip, "modulate:a", 0.0, TANK_DEBRIS_DURATION)
+		tw.tween_property(chip, "scale", Vector2(0.2, 0.2), TANK_DEBRIS_DURATION)
+		tw.set_parallel(false)
+		tw.tween_callback(chip.queue_free)
+
 func _car_size(kind_cfg: Dictionary) -> Vector2:
 	var lw := road.lane_width()
 	var w: float = lw * kind_cfg["width_frac"]
 	return Vector2(w, w * kind_cfg["height_frac"])
 
+# Whichever kind_cfg the player's own car currently is — TANK_KIND while
+# transformed, PLAYER_KIND otherwise. Positioning/effects code that used to
+# assume a fixed player size (dash clamp, drift trails, the skill-choice
+# icon offset) reads this instead so they stay correct against the tank's
+# larger footprint too.
+func _current_kind() -> Dictionary:
+	return TANK_KIND if tank_mode_active else PLAYER_KIND
+
 func current_speed() -> float:
 	var s := BASE_SPEED + elapsed * SPEED_PER_SECOND
 	if boost_active:
 		s *= _boost_speed_mult()
+	if recoil_timer > 0.0:
+		s *= TANK_RECOIL_SPEED_MULT
 	return s
 
 func spawn_interval() -> float:
@@ -445,9 +735,17 @@ func _process(delta: float) -> void:
 		# function. choosing_skill only clears in _resolve_skill_choice, once
 		# the player actually picks one.
 		skill_choice_pulse += delta
+	if tank_mode_active:
+		tank_mode_timer -= delta
+		if tank_mode_timer <= 0.0:
+			_deactivate_tank_mode()
+	if recoil_timer > 0.0:
+		recoil_timer -= delta
+	recoil_offset = move_toward(recoil_offset, 0.0, TANK_RECOIL_RECOVERY_SPEED * delta)
 
-	var sz := _car_size(PLAYER_KIND)
+	var sz := _car_size(_current_kind())
 	var tilt: float
+	var max_steer_speed := MAX_STEER_SPEED * (TANK_STEER_SPEED_MULT if tank_mode_active else 1.0)
 
 	if is_dashing:
 		dash_timer += delta
@@ -475,11 +773,11 @@ func _process(delta: float) -> void:
 			# Both keys read held during the brief overlap of a fast
 			# direction switch — go with whichever was pressed last instead
 			# of treating it as neutral (see steer_priority above).
-			target_vx = float(steer_priority) * MAX_STEER_SPEED
+			target_vx = float(steer_priority) * max_steer_speed
 		elif left:
-			target_vx = -MAX_STEER_SPEED
+			target_vx = -max_steer_speed
 		elif right:
-			target_vx = MAX_STEER_SPEED
+			target_vx = max_steer_speed
 
 		# The drift session persists as long as you keep steering in some
 		# direction — switching left/right mid-drift keeps it going. It ends
@@ -528,10 +826,10 @@ func _process(delta: float) -> void:
 
 			_update_drift_trails(sz.x)
 		else:
-			tilt = clamp(car_vx / MAX_STEER_SPEED, -1.0, 1.0) * MAX_TILT
+			tilt = clamp(car_vx / max_steer_speed, -1.0, 1.0) * MAX_TILT
 
 	player_car.rotation = tilt
-	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
+	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0 + recoil_offset)
 
 	elapsed += delta
 	distance += current_speed() * delta
@@ -636,7 +934,7 @@ func _end_drift() -> void:
 	drift_trail_sides.clear()
 
 func _begin_drift_trails() -> void:
-	var sz := _car_size(PLAYER_KIND)
+	var sz := _car_size(_current_kind())
 	for side in [-1.0, 1.0]:
 		var line := Line2D.new()
 		line.width = sz.x * DRIFT_TRAIL_WIDTH_FRAC
@@ -655,7 +953,7 @@ func _begin_drift_trails() -> void:
 	_update_drift_trails(sz.x)
 
 func _update_drift_trails(car_w: float) -> void:
-	var sz := _car_size(PLAYER_KIND)
+	var sz := _car_size(_current_kind())
 	var rear_y: float = player_car.position.y + sz.y * 0.28
 	for side in drift_trail_sides.keys():
 		var line: Line2D = drift_trail_sides[side]
@@ -827,6 +1125,12 @@ func _pick_traffic_kind() -> Dictionary:
 func _on_player_area_entered(area: Area2D) -> void:
 	if area is SkillPickup:
 		_collect_skill_pickup(area)
+		return
+	if tank_mode_active:
+		# Invincible: a vehicle the tank body touches is crushed instead of
+		# ending the round — the same "vehicle goes away" outcome as a
+		# cannon hit, just triggered by a collision instead of a shot.
+		_destroy_vehicle(area as Car)
 		return
 	if not alive:
 		return
