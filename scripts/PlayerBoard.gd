@@ -43,10 +43,9 @@ var player_texture: Texture2D = null
 # already inside the letterboxed strip.
 var vertical_margin: float = 0.0
 
-const BASE_SPEED := 160.0
-const SPEED_PER_SECOND := 6.0
-const SPAWN_INTERVAL_START := 0.85
-const SPAWN_INTERVAL_MIN := 0.35
+# The road-speed and traffic-density ramp lives in SpeedRamp.gd — see
+# current_speed()/spawn_interval() below. It used to be four constants here
+# with two of them copy-pasted into LaneDivider.gd; tune the curve there.
 const MAX_STEER_SPEED := 460.0
 const STEER_RESPONSE := 9.0
 const MAX_TILT := 0.32
@@ -1226,8 +1225,12 @@ func steer_top_speed() -> float:
 func steer_coast_time() -> float:
 	return 1.0 / STEER_RESPONSE
 
+# The shared ramp sets the baseline for how far into the round we are; the
+# multipliers below it are this board's own temporary state, which is why
+# they are applied here and not in SpeedRamp. Neither touches `elapsed`, so
+# boosting or taking recoil never moves the permanent difficulty ramp.
 func current_speed() -> float:
-	var s := BASE_SPEED + elapsed * SPEED_PER_SECOND
+	var s := SpeedRamp.speed_at(elapsed)
 	if boost_active:
 		s *= _boost_speed_mult()
 	if recoil_timer > 0.0:
@@ -1235,7 +1238,7 @@ func current_speed() -> float:
 	return s
 
 func spawn_interval() -> float:
-	return max(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_START - elapsed * 0.015)
+	return SpeedRamp.spawn_interval_at(elapsed)
 
 func _process(delta: float) -> void:
 	if not active or not alive:

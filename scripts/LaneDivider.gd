@@ -15,8 +15,6 @@ class_name LaneDivider
 @export var render_margin: float = 0.0
 
 const MEDIAN_TEXTURE := preload("res://sprites/road/median_tile.png")
-const BASE_SPEED := 160.0
-const SPEED_PER_SECOND := 6.0
 
 var elapsed: float = 0.0
 var distance: float = 0.0
@@ -28,8 +26,11 @@ func reset() -> void:
 
 func _process(delta: float) -> void:
 	elapsed += delta
-	var speed := BASE_SPEED + elapsed * SPEED_PER_SECOND
-	distance += speed * delta
+	# Same ramp the boards run on, read from the one place it is defined —
+	# these were hand-synced copies of PlayerBoard's constants, and the median
+	# scrolling at a different rate than the road beside it is exactly the
+	# bug that fragility invites.
+	distance += SpeedRamp.speed_at(elapsed) * delta
 	queue_redraw()
 
 func _draw() -> void:
