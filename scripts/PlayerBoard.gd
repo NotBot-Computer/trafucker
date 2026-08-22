@@ -2,6 +2,12 @@ extends Node2D
 class_name PlayerBoard
 
 signal crashed
+# Emitted when this board's player picks the "opponent" skill-choice option.
+# PlayerBoard has no direct reference to sibling boards, so it can't apply an
+# opponent skill itself — Main relays this to every OTHER board's
+# receive_opponent_skill() (see Main._on_opponent_skill_triggered). This is
+# the first and only cross-board communication path in the project.
+signal opponent_skill_triggered(skill: String)
 
 const CAR_SCENE := preload("res://scenes/Car.tscn")
 const SKILL_PICKUP_SCENE := preload("res://scenes/SkillPickup.tscn")
@@ -119,6 +125,71 @@ const TANK_RECOIL_KICK := 16.0 # world px the tank visually punches back on fire
 const TANK_RECOIL_RECOVERY_SPEED := 90.0 # px/sec the kick offset recovers at
 const TANK_RECOIL_DURATION := 0.3 # brief current_speed() dip synced with the kick
 const TANK_RECOIL_SPEED_MULT := 0.55
+
+# Opponent skills: picked from this pool but applied to every OTHER player's
+# board, never the one who picked — mirrors SELF_SKILLS' pool-of-strings
+# pattern, just resolved on the receiving end (see receive_opponent_skill)
+# instead of locally.
+const OPPONENT_SKILLS := ["taxi"]
+
+# Taxi (the first opponent skill): a reckless cab barges onto a rival's board
+# from behind — spawning past the bottom edge, since "behind" in this game's
+# fiction is larger y (traffic spawns ahead at small y and closes in, so
+# anything starting beyond board_height hasn't reached the player yet from
+# their own point of view — it's tailgating them, see CLAUDE.md's
+# +y-is-down/forward convention). It harasses the player for
+# TAXI_HARASS_DURATION, weaving between lanes and surging forward or dropping
+# back, before flooring it and driving off the top.
+#
+# **It is an ordinary traffic vehicle, and moves through the exact same line
+# as every other car** (`position.y += speed * speed_mult * delta` in
+# _process's obstacle loop). The only thing the taxi's AI does is *set* its
+# own speed_mult and steer laterally each frame; it does not move itself.
+# An earlier version drove its own y directly, chasing the player's position
+# — which made it phase straight through any car between them, the exact
+# opposite of belonging to the traffic. Everything erratic about it is
+# therefore expressed within the traffic model rather than as an exception to
+# it: acceleration/braking is speed_mult easing toward a new target
+# (TAXI_SPEED_RESPONSE), and since speed_mult is a *closing fraction* of road
+# speed, a negative value simply means "driving faster than the player" —
+# which is what legitimately lets it overtake and come up from behind, with
+# no need to break the sub-1.0 invariant in GameSettings.TRAFFIC_KINDS.
+#
+# What it must never do is drive through other traffic: _taxi_follow_limit
+# clamps its speed_mult so it can't close on a car ahead of it in its own
+# lane (it tailgates instead), and _taxi_target_clear gates every lane change
+# on the target actually being free — re-checked continuously, not just at
+# decision time. It is only ever ruthless toward the *player*.
+# The taxi art is a *derivative of the fleet's own sedan sprite* (checker
+# band + roof lamp painted onto sprites/cars/sedan_yellow.png), not an
+# independently-sourced asset. Two earlier attempts used standalone taxi art
+# and both read as pasted-on rather than as traffic — the mismatch was art
+# lineage, not size or placement: the fleet sprites are soft-shaded rounded
+# renders with gray-blue tinted glass, while the source taxi art was
+# hard-outlined flat pixel art of a boxy vehicle, at ~2.5x the fleet's
+# brightness. Deriving from a fleet sprite makes belonging structural
+# instead of something to be matched by eye. If this art is ever regenerated,
+# regenerate it from a fleet sedan the same way.
+const TAXI_TEXTURE := preload("res://sprites/cars/taxi.png")
+const TAXI_KIND := {"width_frac": 0.62, "height_frac": 1.6962} # identical footprint to TRAFFIC_KINDS' sedan (0.62/1.69) — it must never read as bigger than ordinary traffic
+const TAXI_HARASS_DURATION := 8.0
+# speed_mult bounds. Negative = driving faster than the player (overtakes,
+# travels up the screen); positive = slower than the player (falls back).
+# Kept away from 1.0 for the same reason every TRAFFIC_KINDS entry is.
+const TAXI_SPEED_MULT_MIN := -0.5
+const TAXI_SPEED_MULT_MAX := 0.85
+const TAXI_SPEED_RESPONSE := 2.2 # how fast speed_mult eases toward its target — this easing *is* the accelerating/braking
+const TAXI_LEAVE_SPEED_MULT := -0.95 # floors it away up the road once the harass window ends
+const TAXI_FOLLOW_GAP := 30.0 # clear px it insists on keeping from the car ahead before it has to lift off
+const TAXI_SIDE_GAP := 18.0 # clear px needed alongside before it'll merge — far tighter than traffic's LANE_CHANGE_SAFE_GAP, this driver squeezes
+const TAXI_X_RESPONSE := 7.0 # in MAX_STEER_SPEED's ballpark — smooth, player-like lane changes, never an instant snap
+const TAXI_MAX_STEER_SPEED := 520.0 # noticeably more aggressive than the player's own MAX_STEER_SPEED (460)
+const TAXI_X_GAIN := 3.0
+const TAXI_DECISION_INTERVAL_MIN := 0.8 # how often it re-rolls a new lane target + signal behavior during harass
+const TAXI_DECISION_INTERVAL_MAX := 1.6
+const TAXI_SIGNAL_WARNING := 0.35 # short and erratic vs. real traffic's LANE_CHANGE_INDICATOR_WARNING (1.3s) — this driver barely warns at all
+const TAXI_SIGNAL_TAIL := 0.2
+const TAXI_TILT_MAX := 0.4
 
 # Shared "a car just got destroyed" animation — used for the player's own
 # crash and for a vehicle killed by tank crush/cannon fire (see
@@ -260,6 +331,8 @@ var recoil_offset: float = 0.0 # world px currently punched back along y; decays
 var recoil_timer: float = 0.0 # while > 0, current_speed() is dipped (see TANK_RECOIL_SPEED_MULT)
 var fire_anim_tween: Tween = null
 
+var active_taxis: Array[Car] = [] # taxis currently harassing/leaving this board — see _spawn_taxi/_update_taxis
+
 const BOOST_TIER_BOUNDS: Array[float] = [0.0, BOOST_TIER_LOW_MAX, BOOST_TIER_MID_MAX, 1.0]
 
 func _draw() -> void:
@@ -340,9 +413,15 @@ func _draw_skill_icon(center: Vector2, r: float, color: Color, key_label: String
 		var icon_rect := Rect2(center - Vector2(icon_w, icon_h) * 0.5, Vector2(icon_w, icon_h))
 		draw_texture_rect(TANK_TEXTURE, icon_rect, false)
 	else:
-		# Simple glyph: a lone "-" reads as a debuff aimed at opponents — no
-		# opponent skill (or its icon art) exists yet.
-		draw_line(center + Vector2(-r * 0.4, 0), center + Vector2(r * 0.4, 0), Color.WHITE, 3.0)
+		# Taxi is the only opponent skill so far, so its own pixel art
+		# doubles as the choice glyph — once OPPONENT_SKILLS has more than
+		# one entry, this should show whichever skill the pool would
+		# actually grant, same as the self/tank icon above.
+		var tex_size: Vector2 = TAXI_TEXTURE.get_size()
+		var icon_h: float = r * 1.5
+		var icon_w: float = icon_h * (tex_size.x / tex_size.y)
+		var icon_rect := Rect2(center - Vector2(icon_w, icon_h) * 0.5, Vector2(icon_w, icon_h))
+		draw_texture_rect(TAXI_TEXTURE, icon_rect, false)
 	var font := ThemeDB.fallback_font
 	draw_string(font, Vector2(center.x - 40.0, center.y + r + 22.0), key_label, HORIZONTAL_ALIGNMENT_CENTER, 80.0, 14, Color.WHITE)
 
@@ -406,6 +485,10 @@ func start_round() -> void:
 	if fire_effect_sprite != null and is_instance_valid(fire_effect_sprite):
 		fire_effect_sprite.queue_free()
 	fire_effect_sprite = null
+	# Any taxis in flight are already freed by the obstacle_container wipe
+	# above (they're children of it, see _spawn_taxi) — just drop the stale
+	# references so _update_taxis doesn't iterate freed nodes next round.
+	active_taxis.clear()
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
 	road.distance = 0.0
 	road.queue_redraw()
@@ -511,9 +594,12 @@ func _collect_skill_pickup(pickup: SkillPickup) -> void:
 	choosing_skill = true
 	skill_choice_pulse = 0.0
 
-# category is "opponent" (left icon/key) or "self" (right icon/key). Opponent
-# skills are still an unimplemented stub — this is the hook point for them
-# once they're designed. Self skills are picked from SELF_SKILLS.
+# category is "opponent" (left icon/key) or "self" (right icon/key). Self
+# skills are picked from SELF_SKILLS and applied directly. Opponent skills
+# are picked from OPPONENT_SKILLS but can't be applied here — this board has
+# no reference to its rivals — so it just broadcasts the pick and lets Main
+# relay it to everyone else (see the opponent_skill_triggered signal comment
+# and receive_opponent_skill below).
 func _resolve_skill_choice(category: String) -> void:
 	choosing_skill = false
 	if category == "self":
@@ -521,7 +607,17 @@ func _resolve_skill_choice(category: String) -> void:
 		if skill == "tank":
 			_activate_tank_mode()
 	else:
-		print("%s picked an opponent skill (not implemented yet)" % player_name)
+		var skill: String = OPPONENT_SKILLS[randi() % OPPONENT_SKILLS.size()]
+		opponent_skill_triggered.emit(skill)
+
+# Entry point for an opponent skill some OTHER player picked, relayed here by
+# Main (see opponent_skill_triggered). A crashed/inactive board still gets
+# the signal but has nothing meaningful to harass, so it's a no-op.
+func receive_opponent_skill(skill: String) -> void:
+	if not alive:
+		return
+	if skill == "taxi":
+		_spawn_taxi()
 
 func _try_activate_boost() -> void:
 	if boost_active or boost_charge <= 0.0:
@@ -748,6 +844,280 @@ func _spawn_debris(pos: Vector2, vehicle_w: float) -> void:
 		tw.set_parallel(false)
 		tw.tween_callback(chip.queue_free)
 
+# Spawns one taxi behind the player (see the TAXI_ constants comment for why
+# that means past board_height) and registers it in active_taxis so
+# _update_taxis picks it up every frame from here on. It sets the same
+# "lane"/"speed_mult" meta keys every other obstacle_container child sets —
+# that's what makes the rest of the traffic systems (_lanes_used_near_top's
+# spawn blocking, _lane_clear_near's merge check) see and avoid it like any
+# other car, rather than it being an invisible exception weaving through them.
+func _spawn_taxi() -> void:
+	var sz := _car_size(TAXI_KIND)
+	var taxi: Car = CAR_SCENE.instantiate()
+	obstacle_container.add_child(taxi)
+	taxi.set_meta("is_taxi", true)
+	taxi.set_size(sz.x, sz.y)
+	taxi.set_texture(TAXI_TEXTURE)
+	taxi.z_index = 2 # reads clearly above ordinary traffic while it's actively weaving through it
+
+	# Enters one lane over from wherever the player currently is — adjacent,
+	# not the same lane, so it never spawns already overlapping the player
+	# the instant it appears.
+	var shoulder := board_width * 0.06
+	var min_x := shoulder + sz.x * 0.5
+	var max_x := board_width - shoulder - sz.x * 0.5
+	var spawn_x: float = clamp(player_car.position.x + (road.lane_width() if randf() < 0.5 else -road.lane_width()), min_x, max_x)
+	# Just far enough down to be fully off-screen (its top edge clears
+	# board_height) without eating into the slack it has before the shared
+	# loop's bottom despawn threshold — it needs room to weave up through
+	# traffic, not to spawn already on the edge of being culled.
+	taxi.position = Vector2(spawn_x, board_height + sz.y * 0.6 + 24.0 + vertical_margin)
+
+	taxi.set_meta("lane", _nearest_lane(spawn_x))
+	# Comes in already flat out, which is what "arrives from behind" means in
+	# closing-fraction terms: negative = travelling faster than the player.
+	taxi.set_meta("speed_mult", TAXI_SPEED_MULT_MIN)
+	taxi.set_meta("tx_target_speed_mult", TAXI_SPEED_MULT_MIN)
+	taxi.set_meta("tx_state", "harass")
+	taxi.set_meta("tx_harass_timer", TAXI_HARASS_DURATION)
+	taxi.set_meta("tx_target_x", spawn_x)
+	taxi.set_meta("tx_vx", 0.0)
+	taxi.set_meta("tx_decision_timer", 0.0) # picks its first real move almost immediately
+	taxi.set_meta("tx_signal_phase", "none") # none | warning | tail — see _update_taxi_signal
+	taxi.set_meta("tx_signal_timer", 0.0)
+	taxi.set_meta("tx_pending_target_x", spawn_x)
+	active_taxis.append(taxi)
+
+func _nearest_lane(x: float) -> int:
+	var best := 0
+	var best_d := INF
+	for lane in range(lane_count):
+		var d: float = abs(road.lane_center_x(lane) - x)
+		if d < best_d:
+			best_d = d
+			best = lane
+	return best
+
+# Runs each taxi's AI once per frame. Called from _process immediately BEFORE
+# the shared obstacle-movement loop, because all this does is decide the
+# taxi's speed_mult and lateral position for this frame — the actual forward
+# movement is then performed by that shared loop, identically to every other
+# vehicle on the board.
+func _update_taxis(delta: float) -> void:
+	for taxi in active_taxis:
+		if is_instance_valid(taxi):
+			_update_taxi_ai(taxi, delta)
+	# Prunes both natural despawns (see _update_taxi_ai's off-the-top check)
+	# and anything freed some other way (e.g. a tanked player crushing it via
+	# the normal _destroy_vehicle collision path — see _on_player_area_entered
+	# — which needs no special-casing here since it just frees the node).
+	active_taxis = active_taxis.filter(func(t): return is_instance_valid(t))
+
+func _update_taxi_ai(taxi: Car, delta: float) -> void:
+	var sz := _car_size(TAXI_KIND)
+	var state: String = taxi.get_meta("tx_state", "harass")
+
+	if state == "harass":
+		var timer: float = taxi.get_meta("tx_harass_timer", 0.0) - delta
+		if timer <= 0.0:
+			taxi.set_meta("tx_state", "leaving")
+			taxi.set_meta("tx_target_speed_mult", TAXI_LEAVE_SPEED_MULT)
+			taxi.set_meta("tx_signal_phase", "none")
+			taxi.stop_indicator()
+		else:
+			taxi.set_meta("tx_harass_timer", timer)
+			_update_taxi_decision(taxi, delta, sz)
+
+	_update_taxi_signal(taxi, delta)
+	_update_taxi_steering(taxi, delta, sz)
+
+	# Ease speed_mult toward its target (the accelerate/decelerate), then let
+	# the car-following limit have the final say — so however aggressive the
+	# AI's intent is, it can never result in closing on the car in front.
+	var mult: float = taxi.get_meta("speed_mult", 0.0)
+	var target_mult: float = taxi.get_meta("tx_target_speed_mult", 0.0)
+	mult += (target_mult - mult) * (1.0 - exp(-TAXI_SPEED_RESPONSE * delta))
+	taxi.set_meta("speed_mult", _taxi_follow_limit(taxi, mult, sz))
+	taxi.set_meta("lane", _nearest_lane(taxi.position.x))
+
+	# Stuck behind someone: go looking for a gap now rather than waiting out
+	# the rest of the decision interval. Without this the taxi patiently
+	# tailgates whatever it caught up to — and since that car is itself
+	# drifting back past the player, patience means being carried off the
+	# bottom of the board and despawned, i.e. the skill quietly fizzling.
+	if state == "harass" and taxi.get_meta("tx_blocked", false):
+		taxi.set_meta("tx_decision_timer", min(float(taxi.get_meta("tx_decision_timer", 0.0)), 0.15))
+
+	if taxi.position.y < -sz.y - 80.0 - vertical_margin:
+		taxi.queue_free()
+
+# Car-following: the taxi may not close on a vehicle occupying the space it's
+# moving into. speed_mult is a closing fraction of road speed, so "not
+# closing" is just a bound on the mult relative to that other vehicle's own —
+# match its mult and the gap between them stops shrinking (it tailgates).
+# Lower mult = travelling further up the screen, hence the asymmetry below.
+func _taxi_follow_limit(taxi: Car, mult: float, sz: Vector2) -> float:
+	var blocked := false
+	for other in obstacle_container.get_children():
+		if other == taxi or not (other is Car):
+			continue
+		var other_w: float = other.width
+		if abs(other.position.x - taxi.position.x) > (sz.x + other_w) * 0.45:
+			continue
+		var other_mult: float = other.get_meta("speed_mult", 1.0)
+		var dy: float = other.position.y - taxi.position.y
+		var gap: float = abs(dy) - (sz.y + other.height) * 0.5
+		if gap > TAXI_FOLLOW_GAP:
+			continue
+		if dy < 0.0:
+			if other_mult > mult:
+				blocked = true # having to lift off for a car ahead is what "stuck" means here
+			mult = max(mult, other_mult) # something ahead (up the road) — can't travel up into it
+		else:
+			mult = min(mult, other_mult) # something behind — can't drop back into it
+	taxi.set_meta("tx_blocked", blocked)
+	return mult
+
+# Periodically (every TAXI_DECISION_INTERVAL_MIN..MAX seconds while
+# harassing) re-rolls what the taxi does next: a new target speed_mult (see
+# _pick_taxi_speed_mult — easing toward it is what produces the
+# accelerate/decelerate feel) and a new lane, where it also picks one of three
+# signal behaviors so the lane change itself doesn't always look the same:
+# an honest warning, no warning at all, or a fakeout (signals one way, goes
+# the other). The real target only ever lands in tx_target_x once the signal
+# phase (if any) resolves — see _update_taxi_signal — so a fakeout's
+# indicator is genuinely lit before the car commits to the opposite move.
+func _update_taxi_decision(taxi: Car, delta: float, sz: Vector2) -> void:
+	var t: float = taxi.get_meta("tx_decision_timer", 0.0) - delta
+	if t > 0.0:
+		taxi.set_meta("tx_decision_timer", t)
+		return
+	taxi.set_meta("tx_decision_timer", randf_range(TAXI_DECISION_INTERVAL_MIN, TAXI_DECISION_INTERVAL_MAX))
+	taxi.set_meta("tx_target_speed_mult", _pick_taxi_speed_mult(taxi, sz))
+
+	var shoulder := board_width * 0.06
+	var min_x := shoulder + sz.x * 0.5
+	var max_x := board_width - shoulder - sz.x * 0.5
+	var cur_x: float = taxi.position.x
+	# It's allowed to threaten the player, but it's still part of the
+	# traffic — never commit to a target that clips through another vehicle,
+	# same "verify clear before moving" rule ordinary lane-changing traffic
+	# already follows (see _lane_clear_near). Tries both directions (in
+	# random order) before giving up for this cycle.
+	var dirs: Array = [-1.0, 1.0]
+	dirs.shuffle()
+	var real_target_x := cur_x
+	var real_dir := 0
+	for d: float in dirs:
+		var candidate_x: float = clamp(cur_x + d * road.lane_width(), min_x, max_x)
+		var dir_i: int = int(sign(candidate_x - cur_x))
+		if dir_i == 0:
+			continue
+		if _taxi_target_clear(taxi, candidate_x):
+			real_target_x = candidate_x
+			real_dir = dir_i
+			break
+	if real_dir == 0:
+		return # every nearby lane is occupied (or it's boxed against a shoulder) — sit tight, try again next cycle
+
+	var roll := randf()
+	if roll < 0.35:
+		# Honest signal: warn, then actually go that way.
+		_arm_taxi_signal(taxi, real_target_x, real_dir)
+	elif roll < 0.65:
+		# No signal at all — the lane change just starts immediately, no
+		# warning, "switches lanes without any indicator."
+		taxi.set_meta("tx_target_x", real_target_x)
+		taxi.set_meta("tx_signal_phase", "none")
+		taxi.stop_indicator()
+	else:
+		# The fakeout: light the OPPOSITE lamp, then actually go real_dir —
+		# "signals right, turns left."
+		_arm_taxi_signal(taxi, real_target_x, -real_dir)
+
+# Rolls the taxi's next speed target, biased by where it currently sits
+# relative to the player so it keeps hanging around them — but always by
+# choosing a *speed*, never by teleporting toward their position. Being
+# alongside is where the range opens up fully, since that's where a sudden
+# surge or a hard lift-off is most alarming to drive next to.
+func _pick_taxi_speed_mult(taxi: Car, sz: Vector2) -> float:
+	var dy: float = taxi.position.y - player_car.position.y
+	if dy > sz.y * 1.2:
+		return randf_range(TAXI_SPEED_MULT_MIN, -0.15) # dropped behind — get back up there
+	if dy < -sz.y * 2.2:
+		return randf_range(0.15, TAXI_SPEED_MULT_MAX) # well up the road — ease off and let them catch up
+	return randf_range(TAXI_SPEED_MULT_MIN, TAXI_SPEED_MULT_MAX)
+
+func _arm_taxi_signal(taxi: Car, real_target_x: float, lamp_dir: int) -> void:
+	taxi.set_meta("tx_pending_target_x", real_target_x)
+	taxi.set_meta("tx_signal_phase", "warning")
+	taxi.set_meta("tx_signal_timer", TAXI_SIGNAL_WARNING)
+	taxi.start_indicator(lamp_dir)
+
+# Same spirit as _lane_clear_near, but measured against a target x and real
+# sprite dimensions rather than a discrete lane index, since the taxi isn't
+# lane-snapped. Uses TAXI_SIDE_GAP rather than traffic's much roomier
+# LANE_CHANGE_SAFE_GAP (200px) deliberately: the taxi should squeeze into
+# gaps a polite driver wouldn't touch, so the bar is "geometrically cannot
+# overlap", not "comfortably clear". The taxi is only ever exempt from this
+# with respect to the player — never toward the rest of the traffic.
+func _taxi_target_clear(taxi: Car, target_x: float) -> bool:
+	for other in obstacle_container.get_children():
+		if other == taxi or not (other is Car):
+			continue
+		if abs(other.position.x - target_x) > (taxi.width + other.width) * 0.5:
+			continue
+		if abs(other.position.y - taxi.position.y) < (taxi.height + other.height) * 0.5 + TAXI_SIDE_GAP:
+			return false
+	return true
+
+# warning -> commit the pending target (tx_target_x) and keep the lamp on for
+# a short tail, same as it would after a real move; tail -> lamp off, done.
+func _update_taxi_signal(taxi: Car, delta: float) -> void:
+	var phase: String = taxi.get_meta("tx_signal_phase", "none")
+	if phase == "none":
+		return
+	var t: float = taxi.get_meta("tx_signal_timer", 0.0) - delta
+	if t > 0.0:
+		taxi.set_meta("tx_signal_timer", t)
+		return
+	if phase == "warning":
+		taxi.set_meta("tx_target_x", taxi.get_meta("tx_pending_target_x", taxi.position.x))
+		taxi.set_meta("tx_signal_phase", "tail")
+		taxi.set_meta("tx_signal_timer", TAXI_SIGNAL_TAIL)
+	else:
+		taxi.stop_indicator()
+		taxi.set_meta("tx_signal_phase", "none")
+
+# Lateral only — forward motion belongs to the shared obstacle loop (see the
+# TAXI_ constants comment). Steering chases the current target through the
+# same exponential velocity-approach shape the player's own steering uses
+# (compare to the `car_vx += (target_vx - car_vx) * approach` line in
+# _process) rather than the discrete eased t-over-duration slide ordinary
+# lane-changing traffic uses — that continuous, momentum-carrying weave is
+# what still makes it read as a car being driven at you rather than scenery.
+func _update_taxi_steering(taxi: Car, delta: float, sz: Vector2) -> void:
+	var shoulder := board_width * 0.06
+	var min_x := shoulder + sz.x * 0.5
+	var max_x := board_width - shoulder - sz.x * 0.5
+
+	# Clearance is re-checked every frame, not just when the move was
+	# decided: traffic keeps moving, so a gap that was open when the taxi
+	# committed can close before it gets there. If that happens it abandons
+	# the move and holds its current x rather than sliding into the car.
+	var target_x: float = clamp(taxi.get_meta("tx_target_x", taxi.position.x), min_x, max_x)
+	if not _taxi_target_clear(taxi, target_x):
+		target_x = taxi.position.x
+		taxi.set_meta("tx_target_x", target_x)
+
+	var vx: float = taxi.get_meta("tx_vx", 0.0)
+	var target_vx: float = clamp((target_x - taxi.position.x) * TAXI_X_GAIN, -TAXI_MAX_STEER_SPEED, TAXI_MAX_STEER_SPEED)
+	vx += (target_vx - vx) * (1.0 - exp(-TAXI_X_RESPONSE * delta))
+	taxi.position.x = clamp(taxi.position.x + vx * delta, min_x, max_x)
+	taxi.set_meta("tx_vx", vx)
+
+	taxi.rotation = clamp(vx / TAXI_MAX_STEER_SPEED, -1.0, 1.0) * TAXI_TILT_MAX
+
 func _car_size(kind_cfg: Dictionary) -> Vector2:
 	var lw := road.lane_width()
 	var w: float = lw * kind_cfg["width_frac"]
@@ -899,6 +1269,13 @@ func _process(delta: float) -> void:
 		_spawn_skill_pickup()
 
 	var speed := current_speed()
+	# Taxis only *decide* here — they set their own speed_mult and steer
+	# laterally, then get moved forward by the shared loop below on the exact
+	# same line as every other vehicle. Deliberately not a separate movement
+	# path: see the TAXI_ constants comment for why driving their own y made
+	# them phase through traffic.
+	_update_taxis(delta)
+
 	for child in obstacle_container.get_children():
 		var speed_mult: float = child.get_meta("speed_mult", 1.0)
 		child.position.y += speed * speed_mult * delta

@@ -50,6 +50,7 @@ func _build_boards() -> void:
 			board.body_color = GameSettings.skin_colors[i]
 		boards_container.add_child(board)
 		board.crashed.connect(_on_board_crashed)
+		board.opponent_skill_triggered.connect(_on_opponent_skill_triggered.bind(board))
 		boards.append(board)
 		board_width = board.board_width
 		board_height = board.board_height
@@ -115,6 +116,13 @@ func _start_round() -> void:
 		b.start_round()
 	for d in dividers_container.get_children():
 		d.reset()
+
+# A board has no reference to its siblings, so it can't apply an opponent
+# skill it picked itself — this is the relay: every other board gets it.
+func _on_opponent_skill_triggered(skill: String, source: PlayerBoard) -> void:
+	for b in boards:
+		if b != source:
+			b.receive_opponent_skill(skill)
 
 func _on_board_crashed() -> void:
 	for b in boards:
