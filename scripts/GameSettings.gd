@@ -13,7 +13,13 @@ var bot_flags: Array[bool] = [false, false, false, false]
 # a plain int rather than BotDriver.Difficulty so this autoload — which loads
 # before anything else — carries no dependency on a gameplay script; the
 # screens that display it resolve the name through BotDriver themselves.
-var bot_difficulty: int = 1
+#
+# Defaults to hard because that is the only profile anyone has actually
+# played and signed off on, and because the bot's first job is playtesting:
+# the longer it survives, the more of a round it exercises before you have
+# to restart it. Easy and normal exist and are reachable with the 5 key, but
+# nobody should get an unvalidated profile just by launching the game.
+var bot_difficulty: int = 2
 
 # 1-4 hand player 1-4's board to the AI, or take it back; 5 cycles the
 # difficulty every bot runs at. Number-row digits rather than anything in
