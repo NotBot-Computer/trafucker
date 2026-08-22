@@ -120,6 +120,31 @@ const TANK_RECOIL_RECOVERY_SPEED := 90.0 # px/sec the kick offset recovers at
 const TANK_RECOIL_DURATION := 0.3 # brief current_speed() dip synced with the kick
 const TANK_RECOIL_SPEED_MULT := 0.55
 
+# Shared "a car just got destroyed" animation — used for the player's own
+# crash and for a vehicle killed by tank crush/cannon fire (see
+# _play_destruction_effect). Frames are cropped from a single spark ->
+# fireball -> smoke reference sheet; a future skill that destroys cars a new
+# way should pass its own frames/peak-width into _play_destruction_effect
+# rather than editing this one, so each destruction method can look distinct.
+const EXPLOSION_FRAMES := [
+	preload("res://sprites/cars/explosion_1.png"),
+	preload("res://sprites/cars/explosion_2.png"),
+	preload("res://sprites/cars/explosion_3.png"),
+	preload("res://sprites/cars/explosion_4.png"),
+	preload("res://sprites/cars/explosion_5.png"),
+	preload("res://sprites/cars/explosion_6.png"),
+]
+# Width, in source pixels, of the widest frame above (same
+# measured-by-inspection convention as TANK_EFFECT_SOURCE_TANK_WIDTH) — the
+# reference EXPLOSION_WORLD_SCALE is expressed against, so every frame's own
+# varying size (small spark growing into a full fireball, then settling into
+# smoke) scales proportionally instead of every frame filling the same
+# on-screen size.
+const EXPLOSION_SOURCE_PEAK_WIDTH := 313.0
+const EXPLOSION_WORLD_SCALE := 1.5 # peak frame's on-screen width, relative to the destroyed vehicle's own width
+const EXPLOSION_FRAME_DURATION := 0.055
+const EXPLOSION_FADE_DURATION := 0.2
+
 const TAP_WINDOW := 0.28 # max gap between taps to count as back-to-back
 
 const DASH_DURATION := 0.14
@@ -583,8 +608,35 @@ func _find_cannon_target() -> Car:
 # ending the round) — both are just "this traffic Car goes away with a
 # burst of debris", the only difference is what triggers it.
 func _destroy_vehicle(vehicle: Car) -> void:
+	_play_destruction_effect(vehicle.position, vehicle.width)
 	_spawn_debris(vehicle.position, vehicle.width)
 	vehicle.queue_free()
+
+# The shared "car destroyed" burst: cycles EXPLOSION_FRAMES centered on `pos`
+# then fades, same standalone-overlay-sprite technique as the tank's fire
+# effect (see _show_fire_effect_frame) rather than swapping a body texture.
+# `frames`/`source_peak_width` default to the standard explosion so every
+# current destruction path (crash, crush, cannon) looks the same today, but a
+# future skill that destroys a car a different way can pass its own frame set
+# here to get a distinct animation without touching this sequencing logic.
+func _play_destruction_effect(pos: Vector2, vehicle_w: float, frames: Array = EXPLOSION_FRAMES, source_peak_width: float = EXPLOSION_SOURCE_PEAK_WIDTH) -> void:
+	var sprite := Sprite2D.new()
+	sprite.z_index = 6
+	sprite.position = pos
+	add_child(sprite)
+	var world_scale: float = (vehicle_w * EXPLOSION_WORLD_SCALE) / source_peak_width
+	var tw := create_tween()
+	for frame: Texture2D in frames:
+		tw.tween_callback(_show_destruction_frame.bind(sprite, frame, world_scale))
+		tw.tween_interval(EXPLOSION_FRAME_DURATION)
+	tw.tween_property(sprite, "modulate:a", 0.0, EXPLOSION_FADE_DURATION)
+	tw.tween_callback(sprite.queue_free)
+
+func _show_destruction_frame(sprite: Sprite2D, frame: Texture2D, world_scale: float) -> void:
+	if not is_instance_valid(sprite):
+		return
+	sprite.texture = frame
+	sprite.scale = Vector2(world_scale, world_scale)
 
 # Muzzle flash -> smoke, played as a sequence of standalone overlay sprites
 # (not part of the tank's own texture — see the TANK_FLASH_FRAMES/
@@ -1136,5 +1188,6 @@ func _on_player_area_entered(area: Area2D) -> void:
 		return
 	alive = false
 	active = false
+	_play_destruction_effect(player_car.position, _car_size(_current_kind()).x)
 	player_car.modulate.a = 0.35
 	crashed.emit()
