@@ -46,6 +46,10 @@ var vertical_margin: float = 0.0
 # The road-speed and traffic-density ramp lives in SpeedRamp.gd — see
 # current_speed()/spawn_interval() below. It used to be four constants here
 # with two of them copy-pasted into LaneDivider.gd; tune the curve there.
+# How far past the bottom edge a vehicle travels before the shared obstacle
+# loop culls it. Named because the taxi's spawn has to stay inside it — see
+# TAXI_SPAWN_STAGGER_Y.
+const OBSTACLE_DESPAWN_MARGIN := 140.0
 const MAX_STEER_SPEED := 460.0
 const STEER_RESPONSE := 9.0
 const MAX_TILT := 0.32
@@ -147,9 +151,18 @@ const OPPONENT_SKILLS := ["taxi"]
 # fiction is larger y (traffic spawns ahead at small y and closes in, so
 # anything starting beyond board_height hasn't reached the player yet from
 # their own point of view — it's tailgating them, see CLAUDE.md's
-# +y-is-down/forward convention). It harasses the player for
-# TAXI_HARASS_DURATION, weaving between lanes and surging forward or dropping
-# back, before flooring it and driving off the top.
+# +y-is-down/forward convention). It runs riot through the traffic for
+# TAXI_CHAOS_DURATION, cutting across lanes and surging up the road or
+# braking hard, before flooring it and driving off the top.
+#
+# **It roams the whole board; it does not chase the player.** The first
+# version biased every speed roll to keep it near the player's y, which made
+# it a tailgater with a small range rather than a hazard loose in the
+# traffic. It now picks a destination anywhere up or down the board
+# (tx_roam_y) and drives there, so it sweeps past the player, up ahead into
+# the traffic they are about to reach, and back down again. Being dangerous
+# to the player is a consequence of where the chaos happens to be, not the
+# target it steers toward.
 #
 # **It is an ordinary traffic vehicle, and moves through the exact same line
 # as every other car** (`position.y += speed * speed_mult * delta` in
@@ -182,21 +195,64 @@ const OPPONENT_SKILLS := ["taxi"]
 # regenerate it from a fleet sedan the same way.
 const TAXI_TEXTURE := preload("res://sprites/cars/taxi.png")
 const TAXI_KIND := {"width_frac": 0.62, "height_frac": 1.6962} # identical footprint to TRAFFIC_KINDS' sedan (0.62/1.69) — it must never read as bigger than ordinary traffic
-const TAXI_HARASS_DURATION := 8.0
+const TAXI_CHAOS_DURATION := 11.0
 # speed_mult bounds. Negative = driving faster than the player (overtakes,
 # travels up the screen); positive = slower than the player (falls back).
 # Kept away from 1.0 for the same reason every TRAFFIC_KINDS entry is.
-const TAXI_SPEED_MULT_MIN := -0.5
-const TAXI_SPEED_MULT_MAX := 0.85
+# Both ends are wider than the first version's (-0.5/0.85): the taxi has to
+# cross the whole board in either direction within its window, and a surge
+# that reads as reckless has to clearly out-run the traffic around it.
+const TAXI_SPEED_MULT_MIN := -0.75
+const TAXI_SPEED_MULT_MAX := 0.9
 const TAXI_SPEED_RESPONSE := 2.2 # how fast speed_mult eases toward its target — this easing *is* the accelerating/braking
-const TAXI_LEAVE_SPEED_MULT := -0.95 # floors it away up the road once the harass window ends
+const TAXI_LEAVE_SPEED_MULT := -0.95 # floors it away up the road once the chaos window ends
+
+# Roaming: where on the board the taxi is currently driving to. This replaces
+# the old player-relative speed bias — see the header comment. Expressed as
+# fractions of board_height, kept inside the visible board so the taxi never
+# roams itself off the top edge into the shared despawn.
+#
+# TAXI_ROAM_GAIN converts "how far away that destination is" into a
+# speed_mult, and is re-evaluated *every frame* rather than only at decision
+# time. That continuous evaluation is load-bearing: it eases off as the taxi
+# closes on its destination, which is what stops a full-throttle surge from
+# sailing straight past the top of the board between two decisions.
+const TAXI_ROAM_Y_MIN_FRAC := 0.1
+const TAXI_ROAM_Y_MAX_FRAC := 0.85
+const TAXI_ROAM_GAIN := 1.6 # 1/seconds — roughly how fast it wants to close the remaining distance
+const TAXI_URGENCY_MIN := 0.5 # per-decision scalar on that gain, so some runs are a lunge and others a cruise
+const TAXI_URGENCY_MAX := 1.0
 const TAXI_FOLLOW_GAP := 30.0 # clear px it insists on keeping from the car ahead before it has to lift off
 const TAXI_SIDE_GAP := 18.0 # clear px needed alongside before it'll merge — far tighter than traffic's LANE_CHANGE_SAFE_GAP, this driver squeezes
 const TAXI_X_RESPONSE := 7.0 # in MAX_STEER_SPEED's ballpark — smooth, player-like lane changes, never an instant snap
 const TAXI_MAX_STEER_SPEED := 520.0 # noticeably more aggressive than the player's own MAX_STEER_SPEED (460)
 const TAXI_X_GAIN := 3.0
-const TAXI_DECISION_INTERVAL_MIN := 0.8 # how often it re-rolls a new lane target + signal behavior during harass
-const TAXI_DECISION_INTERVAL_MAX := 1.6
+const TAXI_DECISION_INTERVAL_MIN := 0.45 # how often it re-rolls a new lane target, destination and signal behavior
+const TAXI_DECISION_INTERVAL_MAX := 1.0
+const TAXI_LANE_SWEEP_MAX := 3 # it may cut this many lanes across in one move, not just to the neighbouring one
+# How far up its own lane the taxi looks when hunting for somewhere to go.
+# Picking a lane at random is what left the first version tailgating: it
+# spawns *behind* all the traffic and may not overtake within a lane (see
+# _taxi_follow_limit), so its only way up the road is through the gaps
+# between cars — and a driver looking for a gap aims at the gap. Scored
+# lanes, not random ones, is what actually gets it onto the board.
+const TAXI_HEADROOM_SCAN := 520.0
+const TAXI_HEADROOM_RANDOM := 0.3 # of the time it ignores the best lane and just picks one, so gap-hunting never looks robotic
+# Multiple taxis can land on one board at once (two rivals spending the skill
+# in the same moment — see Main._on_opponent_skill_triggered, which is
+# deliberately cumulative). They all spawn at the same y just off the bottom
+# edge, so without a stagger they arrive overlapping each other, and each
+# one's own car-following clamp then reads the other as a car it must not
+# close on — both lift off and sit there, which looks exactly like the skill
+# doing nothing. Each additional taxi in a wave is pushed a further
+# TAXI_SPAWN_STAGGER_Y back and starts in a different lane.
+# Small, and clamped against the despawn line below — the window between the
+# taxi's spawn y and that line is only about 50px, and a stagger that
+# overshoots it means the second taxi of a wave is culled by the shared
+# obstacle loop on its very first frame, i.e. one rival's skill silently does
+# nothing. Distinct spawn lanes are what actually keeps a wave from
+# overlapping; this is only cosmetic separation on top of that.
+const TAXI_SPAWN_STAGGER_Y := 22.0
 const TAXI_SIGNAL_WARNING := 0.35 # short and erratic vs. real traffic's LANE_CHANGE_INDICATOR_WARNING (1.3s) — this driver barely warns at all
 const TAXI_SIGNAL_TAIL := 0.2
 const TAXI_TILT_MAX := 0.4
@@ -345,7 +401,7 @@ var recoil_offset: float = 0.0 # world px currently punched back along y; decays
 var recoil_timer: float = 0.0 # while > 0, current_speed() is dipped (see TANK_RECOIL_SPEED_MULT)
 var fire_anim_tween: Tween = null
 
-var active_taxis: Array[Car] = [] # taxis currently harassing/leaving this board — see _spawn_taxi/_update_taxis
+var active_taxis: Array[Car] = [] # taxis currently running riot on / leaving this board — see _spawn_taxi/_update_taxis. More than one at a time is normal: simultaneous rivals stack (see Main._on_opponent_skill_triggered).
 
 const BOOST_TIER_BOUNDS: Array[float] = [0.0, BOOST_TIER_LOW_MAX, BOOST_TIER_MID_MAX, 1.0]
 
@@ -679,7 +735,7 @@ func _resolve_skill_choice(category: String) -> void:
 
 # Entry point for an opponent skill some OTHER player picked, relayed here by
 # Main (see opponent_skill_triggered). A crashed/inactive board still gets
-# the signal but has nothing meaningful to harass, so it's a no-op.
+# the signal but has nothing left to menace, so it's a no-op.
 func receive_opponent_skill(skill: String) -> void:
 	if not alive:
 		return
@@ -927,26 +983,60 @@ func _spawn_taxi() -> void:
 	taxi.set_texture(TAXI_TEXTURE)
 	taxi.z_index = 2 # reads clearly above ordinary traffic while it's actively weaving through it
 
-	# Enters one lane over from wherever the player currently is — adjacent,
-	# not the same lane, so it never spawns already overlapping the player
-	# the instant it appears.
-	var shoulder := board_width * 0.06
-	var min_x := shoulder + sz.x * 0.5
-	var max_x := board_width - shoulder - sz.x * 0.5
-	var spawn_x: float = clamp(player_car.position.x + (road.lane_width() if randf() < 0.5 else -road.lane_width()), min_x, max_x)
+	# Enters in a lane the player isn't in, so it never spawns already
+	# overlapping them the instant it appears — and, when a whole wave of
+	# taxis arrives at once, in a lane no taxi already queued behind is
+	# using either. Lane-snapped rather than "player_x ± a lane width":
+	# offsetting from the player put it at arbitrary x, which is half of how
+	# the old one ended up loitering against a shoulder with no lane to call
+	# its own.
+	var lanes: Array = []
+	for i in range(lane_count):
+		lanes.append(i)
+	lanes.shuffle()
+	var player_lane := _nearest_lane(player_car.position.x)
+	var taken := {}
+	for other in active_taxis:
+		if is_instance_valid(other):
+			taken[int(other.get_meta("lane", -1))] = true
+	var spawn_lane := -1
+	for l: int in lanes:
+		if l != player_lane and not taken.has(l):
+			spawn_lane = l
+			break
+	if spawn_lane < 0: # more taxis than lanes — reuse one, the stagger below keeps them apart
+		for l: int in lanes:
+			if l != player_lane:
+				spawn_lane = l
+				break
+	if spawn_lane < 0:
+		spawn_lane = player_lane
+	var spawn_x: float = road.lane_center_x(spawn_lane)
+
 	# Just far enough down to be fully off-screen (its top edge clears
 	# board_height) without eating into the slack it has before the shared
 	# loop's bottom despawn threshold — it needs room to weave up through
-	# traffic, not to spawn already on the edge of being culled.
-	taxi.position = Vector2(spawn_x, board_height + sz.y * 0.6 + 24.0 + vertical_margin)
+	# traffic, not to spawn already on the edge of being culled. Each taxi
+	# already inbound pushes this one further back so a simultaneous wave
+	# arrives as a string of cars rather than a single stack (see
+	# TAXI_SPAWN_STAGGER_Y).
+	var base_y: float = board_height + sz.y * 0.6 + 24.0 + vertical_margin
+	var stagger: float = float(active_taxis.size()) * TAXI_SPAWN_STAGGER_Y
+	var despawn_y: float = board_height + OBSTACLE_DESPAWN_MARGIN + vertical_margin
+	taxi.position = Vector2(spawn_x, min(base_y + stagger, despawn_y - 30.0))
 
-	taxi.set_meta("lane", _nearest_lane(spawn_x))
+	taxi.set_meta("lane", spawn_lane)
 	# Comes in already flat out, which is what "arrives from behind" means in
 	# closing-fraction terms: negative = travelling faster than the player.
 	taxi.set_meta("speed_mult", TAXI_SPEED_MULT_MIN)
 	taxi.set_meta("tx_target_speed_mult", TAXI_SPEED_MULT_MIN)
-	taxi.set_meta("tx_state", "harass")
-	taxi.set_meta("tx_harass_timer", TAXI_HARASS_DURATION)
+	taxi.set_meta("tx_state", "chaos")
+	taxi.set_meta("tx_chaos_timer", TAXI_CHAOS_DURATION)
+	# First destination is well up the board, so it comes in overtaking and
+	# immediately drives up into the traffic instead of settling on the
+	# player's bumper.
+	taxi.set_meta("tx_roam_y", board_height * TAXI_ROAM_Y_MIN_FRAC)
+	taxi.set_meta("tx_urgency", TAXI_URGENCY_MAX)
 	taxi.set_meta("tx_target_x", spawn_x)
 	taxi.set_meta("tx_vx", 0.0)
 	taxi.set_meta("tx_decision_timer", 0.0) # picks its first real move almost immediately
@@ -982,18 +1072,31 @@ func _update_taxis(delta: float) -> void:
 
 func _update_taxi_ai(taxi: Car, delta: float) -> void:
 	var sz := _car_size(TAXI_KIND)
-	var state: String = taxi.get_meta("tx_state", "harass")
+	var state: String = taxi.get_meta("tx_state", "chaos")
 
-	if state == "harass":
-		var timer: float = taxi.get_meta("tx_harass_timer", 0.0) - delta
+	if state == "chaos":
+		var timer: float = taxi.get_meta("tx_chaos_timer", 0.0) - delta
 		if timer <= 0.0:
 			taxi.set_meta("tx_state", "leaving")
 			taxi.set_meta("tx_target_speed_mult", TAXI_LEAVE_SPEED_MULT)
 			taxi.set_meta("tx_signal_phase", "none")
 			taxi.stop_indicator()
 		else:
-			taxi.set_meta("tx_harass_timer", timer)
+			taxi.set_meta("tx_chaos_timer", timer)
 			_update_taxi_decision(taxi, delta, sz)
+			# Re-derived every frame, not just at decision time — see
+			# TAXI_ROAM_GAIN for why that matters.
+			taxi.set_meta("tx_target_speed_mult", _roam_speed_mult(taxi))
+	else:
+		# Leaving still has to pick lanes. Flooring it is not enough on its
+		# own: the taxi may no more drive through the car in front on its way
+		# out than it could on the way in, so an exit that only sets a speed
+		# gets pinned behind traffic and the taxi loiters on the board until
+		# the round kills it, with the "and then it screams off up the road"
+		# beat simply never happening. It keeps gap-hunting; only the roam
+		# destination is dropped, in favour of a flat full-throttle target.
+		_update_taxi_decision(taxi, delta, sz)
+		taxi.set_meta("tx_target_speed_mult", TAXI_LEAVE_SPEED_MULT)
 
 	_update_taxi_signal(taxi, delta)
 	_update_taxi_steering(taxi, delta, sz)
@@ -1012,7 +1115,7 @@ func _update_taxi_ai(taxi: Car, delta: float) -> void:
 	# tailgates whatever it caught up to — and since that car is itself
 	# drifting back past the player, patience means being carried off the
 	# bottom of the board and despawned, i.e. the skill quietly fizzling.
-	if state == "harass" and taxi.get_meta("tx_blocked", false):
+	if state == "chaos" and taxi.get_meta("tx_blocked", false):
 		taxi.set_meta("tx_decision_timer", min(float(taxi.get_meta("tx_decision_timer", 0.0)), 0.15))
 
 	if taxi.position.y < -sz.y - 80.0 - vertical_margin:
@@ -1045,11 +1148,11 @@ func _taxi_follow_limit(taxi: Car, mult: float, sz: Vector2) -> float:
 	taxi.set_meta("tx_blocked", blocked)
 	return mult
 
-# Periodically (every TAXI_DECISION_INTERVAL_MIN..MAX seconds while
-# harassing) re-rolls what the taxi does next: a new target speed_mult (see
-# _pick_taxi_speed_mult — easing toward it is what produces the
-# accelerate/decelerate feel) and a new lane, where it also picks one of three
-# signal behaviors so the lane change itself doesn't always look the same:
+# Periodically (every TAXI_DECISION_INTERVAL_MIN..MAX seconds while causing
+# chaos) re-rolls what the taxi does next: somewhere new on the board to
+# drive to (tx_roam_y + tx_urgency, which _roam_speed_mult turns into the
+# accelerate/decelerate feel every frame) and a new lane, where it also picks
+# one of three signal behaviors so the lane change doesn't always look the same:
 # an honest warning, no warning at all, or a fakeout (signals one way, goes
 # the other). The real target only ever lands in tx_target_x once the signal
 # phase (if any) resolves — see _update_taxi_signal — so a fakeout's
@@ -1060,32 +1163,53 @@ func _update_taxi_decision(taxi: Car, delta: float, sz: Vector2) -> void:
 		taxi.set_meta("tx_decision_timer", t)
 		return
 	taxi.set_meta("tx_decision_timer", randf_range(TAXI_DECISION_INTERVAL_MIN, TAXI_DECISION_INTERVAL_MAX))
-	taxi.set_meta("tx_target_speed_mult", _pick_taxi_speed_mult(taxi, sz))
+	# New destination up or down the board, and how hard it drives to get
+	# there. The speed itself is derived from these every frame in
+	# _roam_speed_mult, not rolled here.
+	taxi.set_meta("tx_roam_y", _pick_taxi_roam_y())
+	taxi.set_meta("tx_urgency", randf_range(TAXI_URGENCY_MIN, TAXI_URGENCY_MAX))
 
-	var shoulder := board_width * 0.06
-	var min_x := shoulder + sz.x * 0.5
-	var max_x := board_width - shoulder - sz.x * 0.5
 	var cur_x: float = taxi.position.x
-	# It's allowed to threaten the player, but it's still part of the
-	# traffic — never commit to a target that clips through another vehicle,
-	# same "verify clear before moving" rule ordinary lane-changing traffic
-	# already follows (see _lane_clear_near). Tries both directions (in
-	# random order) before giving up for this cycle.
-	var dirs: Array = [-1.0, 1.0]
-	dirs.shuffle()
-	var real_target_x := cur_x
-	var real_dir := 0
-	for d: float in dirs:
-		var candidate_x: float = clamp(cur_x + d * road.lane_width(), min_x, max_x)
-		var dir_i: int = int(sign(candidate_x - cur_x))
-		if dir_i == 0:
-			continue
-		if _taxi_target_clear(taxi, candidate_x):
-			real_target_x = candidate_x
-			real_dir = dir_i
-			break
+	var cur_lane := _nearest_lane(cur_x)
+	# Any lane within TAXI_LANE_SWEEP_MAX, not just the neighbouring one, and
+	# always a real lane centre. The first version could only ever target
+	# `cur_x ± one lane width` and then clamped that to the shoulder, so a
+	# taxi that drifted wide had a target that resolved to roughly where it
+	# already was — it would sit against the edge of the road looking parked.
+	# Cutting three lanes at once is also just more alarming to be near.
+	var candidates: Array = []
+	for l in range(lane_count):
+		if l != cur_lane and abs(l - cur_lane) <= TAXI_LANE_SWEEP_MAX:
+			candidates.append(l)
+	if candidates.is_empty():
+		return
+	candidates.shuffle()
+
+	# Aim at the lane with the most open road ahead, most of the time. The
+	# taxi may not drive through the car in front of it, so when it is
+	# hemmed in, a randomly chosen lane is usually just a different car to
+	# sit behind — which is exactly how the first version spent its whole
+	# life pinned at the bottom edge of the board. TAXI_HEADROOM_RANDOM of
+	# the time it picks arbitrarily anyway, so the weaving stays erratic
+	# rather than looking like a solver.
+	var target_lane: int = candidates[0]
+	if randf() >= TAXI_HEADROOM_RANDOM:
+		var best: float = -1.0
+		for l: int in candidates:
+			var room: float = _taxi_lane_headroom(taxi, l)
+			if room > best:
+				best = room
+				target_lane = l
+
+	# Committing to a lane that is momentarily blocked is fine and
+	# deliberate: the steering gate re-checks safety every frame and simply
+	# refuses to move sideways while something is actually alongside, so the
+	# taxi ends up leaning on the gap and taking it the instant it opens,
+	# instead of standing down for a whole decision cycle.
+	var real_target_x: float = road.lane_center_x(target_lane)
+	var real_dir: int = int(sign(real_target_x - cur_x))
 	if real_dir == 0:
-		return # every nearby lane is occupied (or it's boxed against a shoulder) — sit tight, try again next cycle
+		return
 
 	var roll := randf()
 	if roll < 0.35:
@@ -1102,24 +1226,57 @@ func _update_taxi_decision(taxi: Car, delta: float, sz: Vector2) -> void:
 		# "signals right, turns left."
 		_arm_taxi_signal(taxi, real_target_x, -real_dir)
 
-# Rolls the taxi's next speed target, biased by where it currently sits
-# relative to the player so it keeps hanging around them — but always by
-# choosing a *speed*, never by teleporting toward their position. Being
-# alongside is where the range opens up fully, since that's where a sudden
-# surge or a hard lift-off is most alarming to drive next to.
-func _pick_taxi_speed_mult(taxi: Car, sz: Vector2) -> float:
-	var dy: float = taxi.position.y - player_car.position.y
-	if dy > sz.y * 1.2:
-		return randf_range(TAXI_SPEED_MULT_MIN, -0.15) # dropped behind — get back up there
-	if dy < -sz.y * 2.2:
-		return randf_range(0.15, TAXI_SPEED_MULT_MAX) # well up the road — ease off and let them catch up
-	return randf_range(TAXI_SPEED_MULT_MIN, TAXI_SPEED_MULT_MAX)
+# The speed the taxi wants *right now* in order to reach wherever it has
+# decided to drive to (tx_roam_y). This is the whole up/down half of its
+# behaviour, and it replaced a version that rolled a random speed biased to
+# keep the taxi near the player's y — which is why the old one never went
+# anywhere: every roll pulled it back to the same band of board.
+#
+# speed_mult is a closing fraction of road speed, so converting a distance
+# into one is just "what fraction of the road's speed closes this gap in
+# about 1/(gain*urgency) seconds". Negative = up the screen, matching the
+# sign convention everywhere else. The clamp to the mult bounds is what makes
+# a distant destination read as a flat-out surge, and the un-clamped tail as
+# it arrives is what makes it settle instead of overshooting.
+func _roam_speed_mult(taxi: Car) -> float:
+	var dy: float = float(taxi.get_meta("tx_roam_y", taxi.position.y)) - taxi.position.y
+	var urgency: float = taxi.get_meta("tx_urgency", TAXI_URGENCY_MAX)
+	var speed: float = max(current_speed(), 1.0)
+	return clamp(dy * TAXI_ROAM_GAIN * urgency / speed, TAXI_SPEED_MULT_MIN, TAXI_SPEED_MULT_MAX)
+
+# Picks the next place on the board to drive to. Deliberately unweighted by
+# where the player is: the taxi's job is to be loose in the traffic, and
+# biasing this toward them is exactly what made the first version a
+# tailgater. It ends up threatening them often regardless, because the
+# player sits at the bottom of a board it now crosses end to end.
+func _pick_taxi_roam_y() -> float:
+	return board_height * randf_range(TAXI_ROAM_Y_MIN_FRAC, TAXI_ROAM_Y_MAX_FRAC)
 
 func _arm_taxi_signal(taxi: Car, real_target_x: float, lamp_dir: int) -> void:
 	taxi.set_meta("tx_pending_target_x", real_target_x)
 	taxi.set_meta("tx_signal_phase", "warning")
 	taxi.set_meta("tx_signal_timer", TAXI_SIGNAL_WARNING)
 	taxi.start_indicator(lamp_dir)
+
+# Clear road ahead (up the board, toward smaller y) in the given lane,
+# measured from the taxi's own y and capped at TAXI_HEADROOM_SCAN. This is
+# the taxi's "where can I actually get to" sense — see the call site in
+# _update_taxi_decision. Cars behind it are irrelevant here: it is trying to
+# make progress up the road, and something it has already passed cannot
+# block that.
+func _taxi_lane_headroom(taxi: Car, lane: int) -> float:
+	var lane_x: float = road.lane_center_x(lane)
+	var room: float = TAXI_HEADROOM_SCAN
+	for other in obstacle_container.get_children():
+		if other == taxi or not (other is Car):
+			continue
+		if abs(other.position.x - lane_x) > (taxi.width + other.width) * 0.5:
+			continue
+		var dy: float = taxi.position.y - other.position.y # >0 = other is ahead, up the road
+		if dy < 0.0:
+			continue
+		room = min(room, max(0.0, dy - (taxi.height + other.height) * 0.5))
+	return room
 
 # Same spirit as _lane_clear_near, but measured against a target x and real
 # sprite dimensions rather than a discrete lane index, since the taxi isn't
@@ -1168,22 +1325,58 @@ func _update_taxi_steering(taxi: Car, delta: float, sz: Vector2) -> void:
 	var min_x := shoulder + sz.x * 0.5
 	var max_x := board_width - shoulder - sz.x * 0.5
 
-	# Clearance is re-checked every frame, not just when the move was
-	# decided: traffic keeps moving, so a gap that was open when the taxi
-	# committed can close before it gets there. If that happens it abandons
-	# the move and holds its current x rather than sliding into the car.
 	var target_x: float = clamp(taxi.get_meta("tx_target_x", taxi.position.x), min_x, max_x)
-	if not _taxi_target_clear(taxi, target_x):
-		target_x = taxi.position.x
-		taxi.set_meta("tx_target_x", target_x)
 
 	var vx: float = taxi.get_meta("tx_vx", 0.0)
 	var target_vx: float = clamp((target_x - taxi.position.x) * TAXI_X_GAIN, -TAXI_MAX_STEER_SPEED, TAXI_MAX_STEER_SPEED)
 	vx += (target_vx - vx) * (1.0 - exp(-TAXI_X_RESPONSE * delta))
-	taxi.position.x = clamp(taxi.position.x + vx * delta, min_x, max_x)
+	var next_x: float = clamp(taxi.position.x + vx * delta, min_x, max_x)
+
+	# Safety is a veto on *this frame's* sideways movement, checked against
+	# where the taxi would actually end up — it is NOT a cancellation of
+	# where it was going. The first version, on any blocked frame, wrote its
+	# current x back into tx_target_x and gave up on the move until the next
+	# decision. Traffic streams past a taxi doing -0.5 constantly, so almost
+	# every lane change got aborted part-way, leaving it stranded between
+	# lanes with no intent; that is most of what "it doesn't do much" was.
+	# Holding the intent and only refusing the individual frame means it
+	# leans on a closed gap and takes it the moment it opens.
+	#
+	# Checking next_x rather than the final target also covers the multi-lane
+	# sweeps added in _update_taxi_decision: the car it must not hit while
+	# crossing three lanes is the one in the middle lane, which never appears
+	# at the target x at all.
+	if _taxi_lateral_blocked(taxi, next_x):
+		vx = 0.0
+		next_x = taxi.position.x
+
+	taxi.position.x = next_x
 	taxi.set_meta("tx_vx", vx)
 
 	taxi.rotation = clamp(vx / TAXI_MAX_STEER_SPEED, -1.0, 1.0) * TAXI_TILT_MAX
+
+# True only if moving to next_x would *close on* a vehicle currently
+# alongside — sharing this stretch of road longitudinally, so a sideways move
+# could actually touch it.
+#
+# The "closes on it" half is what makes this safe to apply as a hard per-frame
+# veto: a taxi that gets boxed in between two cars is already overlapping
+# their lateral bands, and a plain "is this x clear" test would then veto
+# every direction including its way out, welding it in place. Comparing the
+# new separation against the current one means escaping is always permitted
+# and only closing is refused.
+func _taxi_lateral_blocked(taxi: Car, next_x: float) -> bool:
+	for other in obstacle_container.get_children():
+		if other == taxi or not (other is Car):
+			continue
+		if abs(other.position.y - taxi.position.y) >= (taxi.height + other.height) * 0.5 + TAXI_SIDE_GAP:
+			continue # not alongside — there is nothing here to hit sideways
+		var need: float = (taxi.width + other.width) * 0.5
+		var cur_dx: float = abs(other.position.x - taxi.position.x)
+		var next_dx: float = abs(other.position.x - next_x)
+		if next_dx < need and next_dx < cur_dx:
+			return true
+	return false
 
 func _car_size(kind_cfg: Dictionary) -> Vector2:
 	var lw := road.lane_width()
@@ -1383,7 +1576,7 @@ func _process(delta: float) -> void:
 		var speed_mult: float = child.get_meta("speed_mult", 1.0)
 		child.position.y += speed * speed_mult * delta
 		_update_obstacle_lane_change(child, delta)
-		if child.position.y > board_height + 140.0 + vertical_margin:
+		if child.position.y > board_height + OBSTACLE_DESPAWN_MARGIN + vertical_margin:
 			child.queue_free()
 
 	for line in drift_trails:
