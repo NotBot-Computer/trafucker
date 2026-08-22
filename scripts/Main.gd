@@ -52,6 +52,8 @@ func _build_boards() -> void:
 		board.crashed.connect(_on_board_crashed)
 		board.opponent_skill_triggered.connect(_on_opponent_skill_triggered.bind(board))
 		boards.append(board)
+		if i < GameSettings.bot_flags.size() and GameSettings.bot_flags[i]:
+			board.set_bot(true)
 		board_width = board.board_width
 		board_height = board.board_height
 
@@ -105,9 +107,35 @@ func _status_text() -> String:
 	var parts: Array[String] = []
 	for i in range(boards.size()):
 		var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[i]
-		parts.append("%s: %s" % [cfg["name"], cfg["steer_label"]])
+		if boards[i].bot != null:
+			parts.append("%s: BOT" % cfg["name"])
+		else:
+			parts.append("%s: %s" % [cfg["name"], cfg["steer_label"]])
+	parts.append("1-4: bot")
+	parts.append("5: %s" % BotDriver.DIFFICULTY_NAMES[GameSettings.bot_difficulty])
 	parts.append("ESC: menu")
 	return "      ".join(parts)
+
+# Hands one board to the AI, or takes it back, without interrupting the round
+# — the board carries on from wherever the car currently is, whichever way it
+# goes. This is the testing hook the whole thing exists for: start something
+# off, hand it to a bot, and watch it play out with your hands free.
+func _toggle_bot(slot: int) -> void:
+	var enabled: bool = boards[slot].bot == null
+	GameSettings.set_bot(slot, enabled)
+	boards[slot].set_bot(enabled)
+	status_label.text = _status_text()
+
+# Applies to every bot currently on the board as well as to any spawned
+# later, so a difficulty can be judged against the same round rather than
+# needing a restart to take effect.
+func _cycle_bot_difficulty() -> void:
+	GameSettings.bot_difficulty = BotDriver.next_difficulty(GameSettings.bot_difficulty)
+	for b in boards:
+		if b.bot != null:
+			b.bot.set_difficulty(GameSettings.bot_difficulty)
+			b.queue_redraw()
+	status_label.text = _status_text()
 
 func _start_round() -> void:
 	state = "playing"
@@ -143,9 +171,17 @@ func _end_round() -> void:
 	overlay.visible = true
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
-		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ESCAPE:
+			get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+			return
+		var slot: int = GameSettings.BOT_TOGGLE_KEYS.find(event.keycode)
+		if slot != -1 and slot < boards.size():
+			_toggle_bot(slot)
+			return
+		if event.keycode == GameSettings.BOT_DIFFICULTY_KEY:
+			_cycle_bot_difficulty()
+			return
 	if state != "gameover":
 		return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ENTER:

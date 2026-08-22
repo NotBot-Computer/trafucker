@@ -23,6 +23,17 @@ const SKILL_PICKUP_SCENE := preload("res://scenes/SkillPickup.tscn")
 @export var key_skill_self: Key = KEY_E
 @export var player_name: String = "P1"
 
+# --- Bot control -----------------------------------------------------------
+# While `bot` is non-null this board is driven by BotDriver instead of the
+# keyboard: _steer_held() reads bot_steer instead of the real keys, and
+# _unhandled_input ignores this player's bindings outright. It can be switched
+# on or off at any moment, including mid-round (Main's 1-4 keys) — that is the
+# whole point of it, both as a way to watch a change play out hands-free and
+# as the single-player opponent.
+@export var is_bot: bool = false
+var bot: BotDriver = null
+var bot_steer: int = 0 # -1 / 0 / 1, the bot's virtual steering hold
+
 var player_texture: Texture2D = null
 # How far past [0, board_height] the camera can currently see (set by
 # Main._build_boards() via set_vertical_margin() whenever it has to zoom the
@@ -277,6 +288,10 @@ const BOOST_BAR_WIDTH_FRAC := 0.5 # fraction of board_width
 const BOOST_BAR_HEIGHT := 9.0
 const BOOST_BAR_MARGIN_TOP := 14.0
 
+# Sits just below the boost bar and the tank timer that tucks under it, so
+# the bot tag never lands on top of either readout.
+const BOT_TAG_Y := 49.0
+
 @onready var road: Road = $Road
 @onready var obstacle_container: Node2D = $ObstacleContainer
 @onready var player_car: Car = $PlayerCar
@@ -379,6 +394,10 @@ func _draw() -> void:
 	if choosing_skill:
 		_draw_skill_choice()
 
+	if bot != null:
+		var tag: String = "BOT · %s" % bot.difficulty_name()
+		draw_string(ThemeDB.fallback_font, Vector2(0.0, BOT_TAG_Y), tag, HORIZONTAL_ALIGNMENT_CENTER, board_width, 13, Color(1.0, 1.0, 1.0, 0.45))
+
 func _draw_tank_timer(bar_x: float, bar_top: float, bar_w: float) -> void:
 	var bar_y := bar_top + TANK_BAR_GAP
 	draw_rect(Rect2(bar_x, bar_y, bar_w, TANK_BAR_HEIGHT), Color(0.0, 0.0, 0.0, 0.35), true)
@@ -387,7 +406,7 @@ func _draw_tank_timer(bar_x: float, bar_top: float, bar_w: float) -> void:
 	draw_rect(Rect2(bar_x, bar_y, bar_w, TANK_BAR_HEIGHT), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
 
 func _draw_skill_choice() -> void:
-	var sz := _car_size(_current_kind())
+	var sz := car_size()
 	var icon_r: float = road.lane_width() * SKILL_ICON_RADIUS_FRAC
 	var offset_x: float = sz.x * SKILL_ICON_OFFSET_FRAC + icon_r
 	var center_y: float = player_car.position.y
@@ -395,8 +414,12 @@ func _draw_skill_choice() -> void:
 
 	var left_x: float = clamp(player_car.position.x - offset_x, icon_r, board_width - icon_r)
 	var right_x: float = clamp(player_car.position.x + offset_x, icon_r, board_width - icon_r)
-	_draw_skill_icon(Vector2(left_x, center_y), icon_r * pulse, Color(0.92, 0.28, 0.28), OS.get_keycode_string(key_skill_opponent), false)
-	_draw_skill_icon(Vector2(right_x, center_y), icon_r * pulse, Color(0.32, 0.82, 0.42), OS.get_keycode_string(key_skill_self), true)
+	# A bot has no keys to prompt for, so it gets the icons without the key
+	# captions — the pulse alone still reads as "a choice is live here".
+	var opponent_label: String = "" if bot != null else OS.get_keycode_string(key_skill_opponent)
+	var self_label: String = "" if bot != null else OS.get_keycode_string(key_skill_self)
+	_draw_skill_icon(Vector2(left_x, center_y), icon_r * pulse, Color(0.92, 0.28, 0.28), opponent_label, false)
+	_draw_skill_icon(Vector2(right_x, center_y), icon_r * pulse, Color(0.32, 0.82, 0.42), self_label, true)
 
 func _draw_skill_icon(center: Vector2, r: float, color: Color, key_label: String, is_self: bool) -> void:
 	draw_circle(center, r * 1.6, Color(color.r, color.g, color.b, 0.18))
@@ -430,6 +453,8 @@ func _ready() -> void:
 	road.height = board_height
 	road.lane_count = lane_count
 	player_car.area_entered.connect(_on_player_area_entered)
+	if is_bot and bot == null:
+		set_bot(true)
 
 func set_vertical_margin(margin: float) -> void:
 	vertical_margin = margin
@@ -492,17 +517,79 @@ func start_round() -> void:
 	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
 	road.distance = 0.0
 	road.queue_redraw()
+	# Otherwise the bot carries last round's target line (and a held
+	# steering direction) into the first frame of this one.
+	if bot != null:
+		bot.reset()
 	queue_redraw()
+
+# Hands this board to BotDriver, or takes it back. Safe to call at any
+# point in a round — the board itself is stateless about who is driving it,
+# every input path below already goes through the same three functions.
+func set_bot(enabled: bool, level: int = -1) -> void:
+	is_bot = enabled
+	# There is no key-up event coming for a virtual press, and a real key-up
+	# won't be delivered to a bot-driven board either (see _unhandled_input),
+	# so whoever was holding confirm has to be made to let go right here or
+	# boost stays stuck on, draining with nothing able to stop it.
+	_release_confirm()
+	bot_steer = 0
+	steer_priority = 0
+	if enabled:
+		bot = BotDriver.new(self, level if level >= 0 else GameSettings.bot_difficulty)
+	else:
+		bot = null
+	queue_redraw()
+
+# The one place "is this player steering left/right right now?" is answered,
+# so a bot-driven board and a human-driven one run identical physics below —
+# the only difference is where the two booleans came from.
+func _steer_held(direction: int) -> bool:
+	if bot != null:
+		return bot_steer == direction
+	return Input.is_physical_key_pressed(key_left if direction < 0 else key_right)
+
+# What a steering key going down does, shared by the keyboard path and the
+# bot. `register_tap` is what turns a double-tap into a dash; the bot passes
+# false because it asks for dashes outright (see BotDriver._update_actions)
+# and its own lane corrections would otherwise keep tripping the double-tap
+# window by accident.
+func _press_steer(direction: int, register_tap: bool = true) -> void:
+	steer_priority = direction
+	# Once a session is already running, any press keeps it going — the
+	# REVERSAL_THRESHOLD gate only guards the *first* entry from normal
+	# driving, where real built-up momentum is what "reversing against" means.
+	if is_drifting or car_vx * float(direction) < -REVERSAL_THRESHOLD:
+		_try_start_drift()
+	if register_tap:
+		_register_tap(direction)
+
+func _press_confirm() -> void:
+	# Tank Mode repurposes the confirm key entirely: it fires the cannon
+	# instead of spending boost charge for the whole time the transform is
+	# active (see _fire_cannon / _activate_tank_mode).
+	if tank_mode_active:
+		_fire_cannon()
+	else:
+		_try_activate_boost()
+
+func _release_confirm() -> void:
+	boost_active = false
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or event.echo:
+		return
+	# A bot-driven board ignores this player's bindings outright — BotDriver
+	# owns every input path for it (see set_bot / _steer_held), and letting
+	# stray keys through would mean the two fighting over the same car.
+	if bot != null:
 		return
 	# Boost release is handled unconditionally, bypassing the gates below —
 	# if it were gated behind is_dashing like everything else, releasing
 	# key_confirm mid-dash would get swallowed and leave boost_active stuck
 	# on (draining charge with no way to let go) until the next input event.
 	if event.keycode == key_confirm and not event.pressed:
-		boost_active = false
+		_release_confirm()
 		return
 	if not active or not alive:
 		return
@@ -522,27 +609,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if is_dashing:
 		return
 	if event.keycode == key_left:
-		steer_priority = -1
-		# Once a session is already running, any press keeps it going —
-		# the REVERSAL_THRESHOLD gate only guards the *first* entry from
-		# normal driving, where real built-up momentum is what "reversing
-		# against" means.
-		if is_drifting or car_vx > REVERSAL_THRESHOLD:
-			_try_start_drift()
-		_register_tap(-1)
+		_press_steer(-1)
 	elif event.keycode == key_right:
-		steer_priority = 1
-		if is_drifting or car_vx < -REVERSAL_THRESHOLD:
-			_try_start_drift()
-		_register_tap(1)
+		_press_steer(1)
 	elif event.keycode == key_confirm:
-		# Tank Mode repurposes the confirm key entirely: it fires the cannon
-		# instead of spending boost charge for the whole time the transform
-		# is active (see _fire_cannon / _activate_tank_mode).
-		if tank_mode_active:
-			_fire_cannon()
-		else:
-			_try_activate_boost()
+		_press_confirm()
 
 func _register_tap(direction: int) -> void:
 	# Same-direction double-tap triggers a dash. Drift is triggered
@@ -557,12 +628,9 @@ func _register_tap(direction: int) -> void:
 func _try_start_dash(direction: int) -> void:
 	if is_dashing or is_drifting or dash_cooldown_timer > 0.0:
 		return
-	var sz := _car_size(_current_kind())
-	var shoulder := board_width * 0.06
-	var min_x := shoulder + sz.x * 0.5
-	var max_x := board_width - shoulder - sz.x * 0.5
+	var bounds := steer_bounds()
 	dash_from = car_x
-	dash_to = clamp(car_x + direction * road.lane_width(), min_x, max_x)
+	dash_to = clamp(car_x + direction * road.lane_width(), bounds.x, bounds.y)
 	dash_direction = direction
 	dash_timer = 0.0
 	dash_ghost_timer = 0.0
@@ -1131,6 +1199,33 @@ func _car_size(kind_cfg: Dictionary) -> Vector2:
 func _current_kind() -> Dictionary:
 	return TANK_KIND if tank_mode_active else PLAYER_KIND
 
+# The player car's footprint right now. Was spelled out as
+# _car_size(_current_kind()) in four places; BotDriver needs it too, to work
+# out what actually fits in a gap.
+func car_size() -> Vector2:
+	return _car_size(_current_kind())
+
+# The x range the player car is allowed to occupy, shoulders excluded — the
+# clamp the steering block and the dash both land on. BotDriver aims inside
+# the same range so it never commits to a line the car cannot hold.
+func steer_bounds() -> Vector2:
+	var shoulder := board_width * 0.06
+	var half := car_size().x * 0.5
+	return Vector2(shoulder + half, board_width - shoulder - half)
+
+# Steering top speed in force right now — MAX_STEER_SPEED, cut down while
+# transformed (a tank handles heavier). One function so the bot's sense of
+# its own agility cannot drift out of sync with the physics it is driving.
+func steer_top_speed() -> float:
+	return MAX_STEER_SPEED * (TANK_STEER_SPEED_MULT if tank_mode_active else 1.0)
+
+# How long the car keeps coasting sideways after the input stops: car_vx
+# eases toward its target at STEER_RESPONSE per second, so 1/STEER_RESPONSE
+# is the time constant. BotDriver steers against the position this predicts
+# rather than the current one, which is what stops it hunting around a lane.
+func steer_coast_time() -> float:
+	return 1.0 / STEER_RESPONSE
+
 func current_speed() -> float:
 	var s := BASE_SPEED + elapsed * SPEED_PER_SECOND
 	if boost_active:
@@ -1145,6 +1240,13 @@ func spawn_interval() -> float:
 func _process(delta: float) -> void:
 	if not active or not alive:
 		return
+
+	# The bot decides before anything below reads its decision: it sets
+	# bot_steer (picked up by _steer_held in the steering block) and fires
+	# off whatever dash/boost/skill action it wants, landing at exactly the
+	# point in the frame a human's key events would already have landed.
+	if bot != null:
+		bot.tick(delta)
 
 	if dash_cooldown_timer > 0.0:
 		dash_cooldown_timer -= delta
@@ -1165,9 +1267,9 @@ func _process(delta: float) -> void:
 		recoil_timer -= delta
 	recoil_offset = move_toward(recoil_offset, 0.0, TANK_RECOIL_RECOVERY_SPEED * delta)
 
-	var sz := _car_size(_current_kind())
+	var sz := car_size()
 	var tilt: float
-	var max_steer_speed := MAX_STEER_SPEED * (TANK_STEER_SPEED_MULT if tank_mode_active else 1.0)
+	var max_steer_speed := steer_top_speed()
 
 	if is_dashing:
 		dash_timer += delta
@@ -1188,8 +1290,8 @@ func _process(delta: float) -> void:
 		# Steering top speed never changes — drifting is about losing grip,
 		# not going faster. Only how quickly the car's actual momentum
 		# (car_vx) can catch up to the input direction changes.
-		var left := Input.is_physical_key_pressed(key_left)
-		var right := Input.is_physical_key_pressed(key_right)
+		var left := _steer_held(-1)
+		var right := _steer_held(1)
 		var target_vx := 0.0
 		if left and right:
 			# Both keys read held during the brief overlap of a fast
@@ -1227,15 +1329,13 @@ func _process(delta: float) -> void:
 		if drift_sliding and target_vx != 0.0 and sign(car_vx) == sign(target_vx) and abs(car_vx) >= abs(target_vx) * DRIFT_CONVERGE_FRAC:
 			drift_sliding = false
 
-		var shoulder := board_width * 0.06
-		var min_x := shoulder + sz.x * 0.5
-		var max_x := board_width - shoulder - sz.x * 0.5
+		var bounds := steer_bounds()
 		var next_x := car_x + car_vx * delta
-		if next_x < min_x:
-			car_x = min_x
+		if next_x < bounds.x:
+			car_x = bounds.x
 			car_vx = 0.0
-		elif next_x > max_x:
-			car_x = max_x
+		elif next_x > bounds.y:
+			car_x = bounds.y
 			car_vx = 0.0
 		else:
 			car_x = next_x
@@ -1565,6 +1665,6 @@ func _on_player_area_entered(area: Area2D) -> void:
 		return
 	alive = false
 	active = false
-	_play_destruction_effect(player_car.position, _car_size(_current_kind()).x)
+	_play_destruction_effect(player_car.position, car_size().x)
 	player_car.modulate.a = 0.35
 	crashed.emit()

@@ -2,6 +2,40 @@ extends Node
 
 var player_count: int = 2
 
+# Which player slots start a round driven by BotDriver instead of a keyboard.
+# Set by PlayerSelect's single-player option and toggled per slot with the 1-4 keys
+# (in SkinSelect, and live mid-round in Main). This is only the *starting*
+# state for a round — a board can be handed to a bot or taken back at any
+# moment, and PlayerBoard.bot is the truth while one is running.
+var bot_flags: Array[bool] = [false, false, false, false]
+
+# Index into BotDriver.PROFILES (0 = easy, 1 = normal, 2 = hard). Deliberately
+# a plain int rather than BotDriver.Difficulty so this autoload — which loads
+# before anything else — carries no dependency on a gameplay script; the
+# screens that display it resolve the name through BotDriver themselves.
+var bot_difficulty: int = 1
+
+# 1-4 hand player 1-4's board to the AI, or take it back; 5 cycles the
+# difficulty every bot runs at. Number-row digits rather than anything in
+# PLAYER_CONFIGS deliberately: one person has to be able to reach all of them
+# mid-round, and they must not collide with a binding somebody is holding at
+# the time — the digit matching the player number is the mnemonic. These were
+# F1-F5 first, which is wrong on this project's own dev machine and on every
+# other Mac: the function row is media keys unless fn is held, so F3 opened
+# Mission Control and took focus off the game instead of toggling anything.
+# Both screens that honour them — SkinSelect before a round, Main during one
+# — read this list, so the two can't drift apart.
+const BOT_TOGGLE_KEYS := [KEY_1, KEY_2, KEY_3, KEY_4]
+const BOT_DIFFICULTY_KEY := KEY_5
+
+func set_bot(slot: int, enabled: bool) -> void:
+	if slot >= 0 and slot < bot_flags.size():
+		bot_flags[slot] = enabled
+
+func clear_bots() -> void:
+	for i in range(bot_flags.size()):
+		bot_flags[i] = false
+
 # Selectable player car skins: shown in SkinSelect, then applied to the
 # player's Car in Main. Order matters for the default index (P1=0, P2=1...).
 # "color" is a flat approximation of each texture's dominant hue — used for

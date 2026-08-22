@@ -6,6 +6,11 @@ extends Control
 var indices: Array[int] = []
 var ready_flags: Array[bool] = []
 var panel_refs: Array[Dictionary] = []
+# Latched the moment every slot is ready, because _refresh() waits a beat
+# before changing scene and any further keypress in that window would call it
+# again — which with bot slots (which are ready the instant they are toggled)
+# is far easier to hit than it used to be.
+var starting: bool = false
 
 func _ready() -> void:
 	var count: int = GameSettings.player_count
@@ -65,6 +70,12 @@ func _cycle(current: int, taken: Array[int], delta: int) -> int:
 			break
 	return next
 
+# A bot slot needs nobody to lock it in — it is ready the moment it is
+# switched on, keeping whatever colour it was already showing. That is what
+# makes the single-player path (and an all-bot round) start on its own.
+func _is_ready(slot: int) -> bool:
+	return GameSettings.bot_flags[slot] or ready_flags[slot]
+
 func _refresh() -> void:
 	var all_ready := true
 	for i in range(panel_refs.size()):
@@ -73,14 +84,20 @@ func _refresh() -> void:
 		ref["swatch"].texture = skin["texture"]
 		ref["name_label"].text = skin["name"]
 		var cfg: Dictionary = ref["cfg"]
-		if ready_flags[i]:
+		if GameSettings.bot_flags[i]:
+			ref["status_label"].text = "BOT (%s)\n%s to take back" % [
+				BotDriver.DIFFICULTY_NAMES[GameSettings.bot_difficulty],
+				OS.get_keycode_string(GameSettings.BOT_TOGGLE_KEYS[i]),
+			]
+		elif ready_flags[i]:
 			ref["status_label"].text = "READY!"
 		else:
 			ref["status_label"].text = "%s to change, %s to lock in" % [cfg["steer_label"], cfg["confirm_label"]]
 			all_ready = false
-	hint.text = "Starting..." if all_ready else "Choose your car color"
+	hint.text = "Starting..." if all_ready else "Choose your car color      1-4: bot      5: difficulty"
 
-	if all_ready:
+	if all_ready and not starting:
+		starting = true
 		var chosen: Array[Texture2D] = []
 		var chosen_colors: Array[Color] = []
 		for idx in indices:
@@ -94,11 +111,26 @@ func _refresh() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return
+	if starting:
+		return
 	var key: int = event.keycode
 	var changed := false
 
+	# Same 1-4 / 5 hotkeys as mid-round (see GameSettings.BOT_TOGGLE_KEYS),
+	# so "make P2 a bot" is one key in the same place whether you decide it
+	# here or twenty seconds into the race.
+	var slot: int = GameSettings.BOT_TOGGLE_KEYS.find(key)
+	if slot != -1 and slot < panel_refs.size():
+		GameSettings.set_bot(slot, not GameSettings.bot_flags[slot])
+		_refresh()
+		return
+	if key == GameSettings.BOT_DIFFICULTY_KEY:
+		GameSettings.bot_difficulty = BotDriver.next_difficulty(GameSettings.bot_difficulty)
+		_refresh()
+		return
+
 	for i in range(panel_refs.size()):
-		if ready_flags[i]:
+		if _is_ready(i):
 			continue
 		var cfg: Dictionary = panel_refs[i]["cfg"]
 		var taken: Array[int] = []

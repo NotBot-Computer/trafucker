@@ -12,6 +12,14 @@ Built in **Godot 4**.
 
 Launch the game and you'll get: **Play** → pick 2, 3, or 4 players → each player cycles and locks in a car color → race starts. Each board always has 5 lanes, regardless of player count.
 
+### Playing alone, or against the computer
+
+Pick **1 PLAYER vs BOT** on the player-count screen and you'll race a computer-driven opponent.
+
+More generally, **the 1-4 keys hand player 1-4's board to the AI, or take it back** — on the car-color screen or at any moment during a race. **5** cycles the AI between EASY, NORMAL and HARD. A board the AI is driving is labelled `BOT` under its boost bar. Hand over every board and the game plays itself, which is a handy way to watch a mode without playing it.
+
+The AI drives the same car with the same physics you do — it steers, dashes, drifts, spends boost and picks up skills through exactly the same controls, it just doesn't need a keyboard. Difficulty is how far ahead it plans and how quickly it reacts, not what it's allowed to see.
+
 ## Controls
 
 | Player | Left | Right | Confirm (skin select) |
@@ -25,7 +33,7 @@ Double-tap left or right (quickly, twice back-to-back) to **dash** exactly one l
 
 While already carrying real speed one way, press the opposite direction to start **drifting** — no separate gesture needed, just a genuine sudden reversal. The car's nose points wherever you're steering, but its actual momentum lags behind at reduced grip (not increased speed), so it visibly slides, leaving a twin skid-mark trail from the rear wheels. Keeps drifting as long as you keep steering in either direction; lets go of grip the instant you release both keys.
 
-Press **Enter** to restart after a round ends. Press **Esc** during a round to return to the main menu.
+Press **Enter** to restart after a round ends. Press **Esc** during a round to return to the main menu. **1-4** toggle the AI for each player and **5** changes its difficulty (see above).
 
 ## Running it
 
@@ -65,6 +73,7 @@ scripts/
   SkinSelect.gd        dynamic per-player sprite-pick panels, duplicate-skin avoidance
   Main.gd              instantiates PlayerBoards + dividers for the chosen player count
   PlayerBoard.gd        steering physics, spawning, scoring, collision handling
+  BotDriver.gd          the AI: reads the traffic, plans a lane, drives PlayerBoard's own controls
   Road.gd               lane math and scrolling road-texture rendering
   Car.gd                 swaps between placeholder shape and an assigned texture
   LaneDivider.gd         scrolling grass/tree median renderer

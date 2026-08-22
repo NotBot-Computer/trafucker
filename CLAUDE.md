@@ -18,6 +18,14 @@ Any `SCRIPT ERROR:` or `Failed to load script` in the output means a script is b
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --quit res://scenes/Main.tscn
 ```
 
+Let the bot play it for you (`scripts/BotDriver.gd`): **1-4** hands player 1-4's board to the AI, or takes it back — on the skin-select screen or at any point mid-round — and **5** cycles EASY/NORMAL/HARD. The player-count screen also has a **1 PLAYER vs BOT** button. Turn every board over to it and the round plays itself, which is the fastest way to watch a change work without holding the keys. Note this is still manual playtesting: it verifies nothing on its own, you have to watch it.
+
+For measuring bot behaviour rather than looking at it, `--fixed-fps` disables real-time sync and runs the simulation as fast as the machine allows, so a 60-second round takes a few seconds of wall clock:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 120 res://scenes/Main.tscn
+```
+That boots straight into a round with `GameSettings`' defaults (2 players, no bots), so it's only useful with a throwaway scene that sets `GameSettings.player_count`/`bot_flags`/`bot_difficulty` and instantiates `Main.tscn` itself — see docs/PROJECT_STATE.md §5 session J for what that was used to find.
+
 Godot binary lives at `/opt/homebrew/bin/godot` (CLI) — there's also `Godot.app` in `/Applications` for the GUI editor, but the `godot` CLI command works for both editor (`godot .`) and headless (`godot --headless ...`) use.
 
 ## Workflow rules

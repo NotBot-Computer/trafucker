@@ -14,11 +14,21 @@ color = Color(0.078, 0.086, 0.165, 1.0)
 
 [node name="Title" type="Label" parent="."]
 anchor_right = 1.0
-offset_top = 140.0
-offset_bottom = 180.0
+offset_top = 110.0
+offset_bottom = 150.0
 theme_override_font_sizes/font_size = 28
 horizontal_alignment = 1
 text = "HOW MANY PLAYERS?"
+
+[node name="Players1Button" type="Button" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -100.0
+offset_right = 100.0
+offset_top = 200.0
+offset_bottom = 248.0
+theme_override_font_sizes/font_size = 18
+text = "1 PLAYER vs BOT"
 
 [node name="Players2Button" type="Button" parent="."]
 anchor_left = 0.5
@@ -49,6 +59,13 @@ offset_top = 380.0
 offset_bottom = 428.0
 theme_override_font_sizes/font_size = 18
 text = "4 PLAYERS"
+
+[node name="Hint" type="Label" parent="."]
+anchor_right = 1.0
+offset_top = 460.0
+offset_bottom = 490.0
+horizontal_alignment = 1
+text = "Keys 1-4 turn any player into a bot — on the next screen, or mid-race"
 
 [node name="BackButton" type="Button" parent="."]
 offset_left = 20.0

@@ -22,7 +22,7 @@ script = ExtResource("2_screen_mask")
 [node name="StatusLabel" type="Label" parent="HUD"]
 offset_left = 20.0
 offset_top = 10.0
-offset_right = 1200.0
+offset_right = 1480.0
 offset_bottom = 40.0
 text = "P1: A / D      P2: Left / Right"
 
