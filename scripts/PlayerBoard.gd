@@ -220,16 +220,22 @@ const TAXI_LEAVE_SPEED_MULT := -0.95 # floors it away up the road once the chaos
 const TAXI_ROAM_Y_MIN_FRAC := 0.1
 const TAXI_ROAM_Y_MAX_FRAC := 0.85
 const TAXI_ROAM_GAIN := 1.6 # 1/seconds — roughly how fast it wants to close the remaining distance
-const TAXI_URGENCY_MIN := 0.5 # per-decision scalar on that gain, so some runs are a lunge and others a cruise
-const TAXI_URGENCY_MAX := 1.0
+const TAXI_URGENCY_MIN := 0.45 # per-decision scalar on that gain, so some runs are a lunge and others a cruise
+const TAXI_URGENCY_MAX := 0.85 # was 1.0; the top of this range is what pins the roam speed to TAXI_SPEED_MULT_MIN/MAX, so trimming it takes the edge off the surges and the hard braking without narrowing the bounds themselves (which is what lets it cross the board at all)
 const TAXI_FOLLOW_GAP := 30.0 # clear px it insists on keeping from the car ahead before it has to lift off
-const TAXI_SIDE_GAP := 18.0 # clear px needed alongside before it'll merge — far tighter than traffic's LANE_CHANGE_SAFE_GAP, this driver squeezes
+const TAXI_SIDE_GAP := 28.0 # clear px needed alongside before it'll merge — still far tighter than traffic's LANE_CHANGE_SAFE_GAP (200), this driver squeezes; was 18, which squeezed close enough that merges read as near-misses on nearly every lane change
 const TAXI_X_RESPONSE := 7.0 # in MAX_STEER_SPEED's ballpark — smooth, player-like lane changes, never an instant snap
-const TAXI_MAX_STEER_SPEED := 520.0 # noticeably more aggressive than the player's own MAX_STEER_SPEED (460)
+const TAXI_MAX_STEER_SPEED := 470.0 # a shade above the player's own MAX_STEER_SPEED (460) — it was 520, which made every cut across a lane snap faster than any car the player can steer
 const TAXI_X_GAIN := 3.0
-const TAXI_DECISION_INTERVAL_MIN := 0.45 # how often it re-rolls a new lane target, destination and signal behavior
-const TAXI_DECISION_INTERVAL_MAX := 1.0
-const TAXI_LANE_SWEEP_MAX := 3 # it may cut this many lanes across in one move, not just to the neighbouring one
+# How often it re-rolls a new lane target, destination and signal behavior.
+# Was 0.45-1.0, which is faster than a lane change actually completes, so the
+# taxi was re-deciding mid-move for its entire life and the weave never
+# resolved into readable individual manoeuvres. Being stuck still short-
+# circuits this — see the tx_blocked timer collapse in _update_taxi_ai — so a
+# longer interval costs nothing when it genuinely needs to find a gap now.
+const TAXI_DECISION_INTERVAL_MIN := 0.65
+const TAXI_DECISION_INTERVAL_MAX := 1.4
+const TAXI_LANE_SWEEP_MAX := 2 # it may cut this many lanes across in one move, not just to the neighbouring one; was 3, and a full three-lane slash across the board was the single most alarming thing it did
 # How far up its own lane the taxi looks when hunting for somewhere to go.
 # Picking a lane at random is what left the first version tailgating: it
 # spawns *behind* all the traffic and may not overtake within a lane (see
@@ -254,7 +260,7 @@ const TAXI_HEADROOM_RANDOM := 0.3 # of the time it ignores the best lane and jus
 # overlapping; this is only cosmetic separation on top of that.
 const TAXI_SPAWN_STAGGER_Y := 22.0
 const TAXI_SPAWN_CLEARANCE := 24.0 # breathing room at the spawn slot, so it doesn't arrive nose-to-tail either
-const TAXI_SIGNAL_WARNING := 0.35 # short and erratic vs. real traffic's LANE_CHANGE_INDICATOR_WARNING (1.3s) — this driver barely warns at all
+const TAXI_SIGNAL_WARNING := 0.55 # still short and erratic vs. real traffic's LANE_CHANGE_INDICATOR_WARNING (1.3s) — this driver barely warns at all; was 0.35, which is under a lane change's own duration, so even an honest signal gave nothing to react to
 const TAXI_SIGNAL_TAIL := 0.2
 const TAXI_TILT_MAX := 0.4
 
@@ -1248,11 +1254,16 @@ func _update_taxi_decision(taxi: Car, delta: float, sz: Vector2) -> void:
 	if real_dir == 0:
 		return
 
+	# Weighted toward the honest signal (was an even-ish 35/30/35). The
+	# unsignalled cut and the fakeout are the two behaviours that read as
+	# genuinely hostile rather than merely reckless, so they are the ones to
+	# thin out when the taxi needs to come down a notch — the driver still
+	# does both, just not most of the time.
 	var roll := randf()
-	if roll < 0.35:
+	if roll < 0.55:
 		# Honest signal: warn, then actually go that way.
 		_arm_taxi_signal(taxi, real_target_x, real_dir)
-	elif roll < 0.65:
+	elif roll < 0.8:
 		# No signal at all — the lane change just starts immediately, no
 		# warning, "switches lanes without any indicator."
 		taxi.set_meta("tx_target_x", real_target_x)
