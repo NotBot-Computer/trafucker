@@ -94,12 +94,13 @@ const SKILL_PICKUP_RADIUS_FRAC := 0.34 # fraction of lane width
 const SKILL_ICON_RADIUS_FRAC := 0.4 # fraction of lane width
 const SKILL_ICON_OFFSET_FRAC := 1.15 # fraction of car width, icon distance from car center
 
-# Self skills: benefit the player who picks them. Only one exists today
-# (Tank Mode), so _resolve_skill_choice's "self" branch always grants it —
-# but it's picked from this pool rather than hardcoded so a future addition
-# just means appending another entry here, matching the random-pick-from-pool
-# pattern already used for TRAFFIC_KINDS (_pick_traffic_kind).
-const SELF_SKILLS := ["tank"]
+# Self skills: benefit the player who picks them. Rolled from this pool when
+# the choice appears rather than when it is picked (see _roll_pending_skills)
+# so the icon can advertise what it is actually offering, matching the
+# random-pick-from-pool pattern already used for TRAFFIC_KINDS
+# (_pick_traffic_kind). Adding one means an entry here, a branch in
+# _resolve_skill_choice, and a glyph in SKILL_GLYPHS.
+const SELF_SKILLS := ["tank", "nitro"]
 
 # Tank Mode: transform into an invincible tank for a limited time. The
 # player's own confirm key (key_confirm) is repurposed from boost to firing
@@ -143,11 +144,134 @@ const TANK_RECOIL_RECOVERY_SPEED := 90.0 # px/sec the kick offset recovers at
 const TANK_RECOIL_DURATION := 0.3 # brief current_speed() dip synced with the kick
 const TANK_RECOIL_SPEED_MULT := 0.55
 
+# Nitro (the second self skill): the car lifts off the road inside a
+# gathering ball of energy, rockets up it at NITRO_SPEED_MULT for a few
+# seconds trailing a comet, then settles back down. Airborne it flies *over*
+# traffic rather than through it — which is what makes it a benefit rather
+# than a faster way to crash, and what keeps it distinct from Tank Mode's
+# ground-level invincibility (that one crushes what it touches; this one
+# never touches anything). Since a round is scored by distance travelled,
+# the surge banks a real, permanent chunk of score.
+#
+# The six frames are the six panels of the source sheet in the order the
+# sheet itself numbers them: energy gathering, energy intensifying, laser
+# forming, maximum power, energy ebbing, energy out. That storyboard IS the
+# skill's phase order, so _nitro_frame() is just the sheet played against
+# the skill's own clock. Frames 1/2/6 are radially symmetric and get drawn
+# centred on the car; 3/4/5 are directional comets that get anchored on
+# their bright core and rotated (see _update_nitro_visuals).
+# The effect is two layers of the same storyboard. The core is the
+# multi-step sheet: six stages that each play out as a series of sub-frames
+# ("her bir aşama soldakinden sağdakine doğru zaman içinde gerçekleşir" —
+# each stage happens over time, left to right), 23 frames in all. The halo
+# is the softer single-step sheet, drawn larger and dimmer behind it: its
+# comet is proportionally far longer than the multi-step one, so it is what
+# gives the effect its reach, while the core gives it detail and motion.
+#
+# Grouped by stage rather than flattened because each stage owns its own
+# slice of the clock and its frames have to fit inside it — see _nitro_frame.
+const NITRO_STAGE_FRAMES := [
+	[preload("res://sprites/cars/nitro_core_01.png"), preload("res://sprites/cars/nitro_core_02.png"), preload("res://sprites/cars/nitro_core_03.png"), preload("res://sprites/cars/nitro_core_04.png")], # 1 energy gathering
+	[preload("res://sprites/cars/nitro_core_05.png"), preload("res://sprites/cars/nitro_core_06.png"), preload("res://sprites/cars/nitro_core_07.png"), preload("res://sprites/cars/nitro_core_08.png")], # 2 energy intensifying
+	[preload("res://sprites/cars/nitro_core_09.png"), preload("res://sprites/cars/nitro_core_10.png"), preload("res://sprites/cars/nitro_core_11.png")], # 3 laser forming
+	[preload("res://sprites/cars/nitro_core_12.png"), preload("res://sprites/cars/nitro_core_13.png"), preload("res://sprites/cars/nitro_core_14.png")], # 4 maximum power
+	[preload("res://sprites/cars/nitro_core_15.png"), preload("res://sprites/cars/nitro_core_16.png"), preload("res://sprites/cars/nitro_core_17.png"), preload("res://sprites/cars/nitro_core_18.png")], # 5 energy ebbing
+	[preload("res://sprites/cars/nitro_core_19.png"), preload("res://sprites/cars/nitro_core_20.png"), preload("res://sprites/cars/nitro_core_21.png"), preload("res://sprites/cars/nitro_core_22.png"), preload("res://sprites/cars/nitro_core_23.png")], # 6 energy out
+]
+# Per sub-frame: radially symmetric (drawn centred, unrotated) or a
+# directional comet (anchored on its head, turned to trail behind)? Two
+# stages change orientation partway through — the laser forms out of a ring,
+# and the ebb collapses back into one — so this cannot be a per-stage flag.
+const NITRO_STAGE_RADIAL := [
+	[true, true, true, true],
+	[true, true, true, true],
+	[true, false, false],
+	[false, false, false],
+	[false, false, true, true],
+	[true, true, true, true, true],
+]
+const NITRO_HALO_FRAMES := [
+	preload("res://sprites/cars/nitro_1.png"), preload("res://sprites/cars/nitro_2.png"),
+	preload("res://sprites/cars/nitro_3.png"), preload("res://sprites/cars/nitro_4.png"),
+	preload("res://sprites/cars/nitro_5.png"), preload("res://sprites/cars/nitro_6.png"),
+]
+# Which halo frame backs each core sub-frame. Keyed per sub-frame, not per
+# stage, so it can follow NITRO_STAGE_RADIAL through those two orientation
+# changes — a halo comet pointing the wrong way behind a radial core would
+# be immediately obvious.
+const NITRO_HALO_INDEX := [
+	[0, 0, 0, 0],
+	[1, 1, 1, 1],
+	[1, 2, 2],
+	[3, 3, 3],
+	[4, 4, 5, 5],
+	[5, 5, 5, 5, 5],
+]
+const NITRO_FRAME_BURST := preload("res://sprites/cars/nitro_core_08.png") # the stage-2 peak; doubles as the choice-icon glyph
+
+# Per-sheet placement. `aura_src`/`beam_src` are that sheet's own crop height
+# in source px — each group was cropped to one common size precisely so this
+# is a single number per sheet, and so that a sub-frame drawn small within
+# its crop stays small on screen, which is what makes the stages visibly
+# grow. The world scales say how many car widths that height covers on
+# screen, so the effect tracks the car's real footprint (which Tank Mode can
+# change underneath it) rather than a fixed pixel size. `head` is where a
+# beam frame's bright core sits inside its own frame; the beam frames share
+# a common head slot, so this is one number and the effect cannot drift
+# against the car as the frames advance.
+const NITRO_CORE_LAYER := {
+	"aura_src": 290.0, "beam_src": 290.0,
+	"aura_scale": 6.2, "beam_scale": 7.1, "head": Vector2(0.2381, 0.5), "alpha": 1.0,
+}
+const NITRO_HALO_LAYER := {
+	"aura_src": 300.0, "beam_src": 222.0,
+	"aura_scale": 7.8, "beam_scale": 8.7, "head": Vector2(0.231, 0.5045), "alpha": 0.5,
+}
+
+
+const NITRO_CHARGE_DURATION := 0.7 # lift-off, while the energy gathers
+const NITRO_SURGE_DURATION := 3.8 # full power
+const NITRO_LAND_DURATION := 0.8 # descent, while the energy burns off
+const NITRO_TOTAL_DURATION := NITRO_CHARGE_DURATION + NITRO_SURGE_DURATION + NITRO_LAND_DURATION
+const NITRO_SPEED_MULT := 2.85 # peak multiplier on current_speed(), eased in and out by _nitro_power()
+const NITRO_LIFT_PX := 105.0 # world px up the board the car floats at full lift — also what opens up room below it for the trail, which is most of the effect's length
+const NITRO_LIFT_SCALE := 1.24 # and how much bigger it draws there, i.e. how much nearer the camera
+const NITRO_LANDING_GRACE := 0.16 # see _update_nitro_landing
+const NITRO_LASER_FORM_TIME := 0.34 # stage 3's slice of the surge; stage 4 gets all the rest
+const NITRO_SUSTAIN_STAGE := 3 # "maximum power" — the only stage held long enough for a still frame to go stale
+const NITRO_SUSTAIN_FRAME := 0.1 # seconds per frame while stage 4 ping-pongs
+const NITRO_CAR_Z := 3 # while airborne the player draws above traffic (z 0) explicitly, not merely later in tree order
+const NITRO_EFFECT_Z := 2 # ...and the energy between the two, so it covers traffic but never the car itself
+const NITRO_BAR_HEIGHT := 6.0
+const NITRO_BAR_GAP := 4.0 # gap below whichever bar is above it (see _draw)
+# Visual-only. The shudder is written straight onto player_car.position and
+# never back into car_x, so it cannot feed into the steering physics; both
+# scale with _nitro_power(), which means both are already at zero by the
+# time the wheels touch down.
+const NITRO_SHUDDER_PX := 2.4
+const NITRO_PULSE_AMOUNT := 0.055 # breathing scale on the energy, so it reads as held open under pressure rather than parked on the car
+const NITRO_PULSE_SPEED := 19.0
+
+const NITRO_SHADOW_SHRINK := 0.74 # ground shadow at full lift, relative to its grounded size
+const NITRO_SHADOW_ALPHA_GROUND := 0.4
+const NITRO_SHADOW_ALPHA_LIFTED := 0.15
+const NITRO_SHADOW_POINTS := 18
+
 # Opponent skills: picked from this pool but applied to every OTHER player's
 # board, never the one who picked — mirrors SELF_SKILLS' pool-of-strings
 # pattern, just resolved on the receiving end (see receive_opponent_skill)
 # instead of locally.
 const OPPONENT_SKILLS := ["taxi"]
+
+# The art each skill is advertised with on the choice icons. Every entry of
+# SELF_SKILLS/OPPONENT_SKILLS needs one or its icon draws bare (see
+# _draw_skill_icon) — each skill's own in-game art doubles as its glyph
+# rather than there being a separate icon set to keep in sync.
+const SKILL_GLYPHS := {
+	"tank": TANK_TEXTURE,
+	"nitro": NITRO_FRAME_BURST,
+	"taxi": TAXI_TEXTURE,
+}
 
 # Taxi (the first opponent skill): a reckless cab barges onto a rival's board
 # from behind — spawning past the bottom edge, since "behind" in this game's
@@ -411,6 +535,21 @@ var recoil_offset: float = 0.0 # world px currently punched back along y; decays
 var recoil_timer: float = 0.0 # while > 0, current_speed() is dipped (see TANK_RECOIL_SPEED_MULT)
 var fire_anim_tween: Tween = null
 
+var nitro_active: bool = false
+var nitro_timer: float = 0.0 # counts down from NITRO_TOTAL_DURATION; the phase is derived from it, see _nitro_lift
+var nitro_ground_grace: float = 0.0 # > 0 for a moment after touchdown — see _update_nitro_landing
+var nitro_effect_sprite: Sprite2D = null # the dense core layer: one persistent additive overlay, retextured per phase and repositioned every frame
+var nitro_halo_sprite: Sprite2D = null # the softer outer bloom, same phase, drawn bigger and dimmer behind it
+var nitro_shadow: Polygon2D = null # stays down on the asphalt while the car is up, which is what sells the lift
+
+# Which skill each side of the choice would grant if picked right now.
+# Rolled when the choice appears rather than when it is resolved: the icons
+# advertise the pick, and an icon can only be honest about a roll that has
+# already happened. Harmless while a pool holds one entry; a lie the moment
+# it holds two, which SELF_SKILLS now does.
+var pending_self_skill: String = ""
+var pending_opponent_skill: String = ""
+
 var active_taxis: Array[Car] = [] # taxis currently running riot on / leaving this board — see _spawn_taxi/_update_taxis. More than one at a time is normal: simultaneous rivals stack (see Main._on_opponent_skill_triggered).
 
 const BOOST_TIER_BOUNDS: Array[float] = [0.0, BOOST_TIER_LOW_MAX, BOOST_TIER_MID_MAX, 1.0]
@@ -453,8 +592,14 @@ func _draw() -> void:
 		draw_line(Vector2(divider_x, bar_y - 1.0), Vector2(divider_x, bar_y + bar_h + 1.0), Color(0.0, 0.0, 0.0, 0.6), 1.5)
 	draw_rect(Rect2(bar_x, bar_y, bar_w, bar_h), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
 
+	# Each active transform's timer stacks under the boost bar in turn, so
+	# holding both at once (picking "self" twice) doesn't overlap them.
+	var timer_y := bar_y + bar_h
 	if tank_mode_active:
-		_draw_tank_timer(bar_x, bar_y + bar_h, bar_w)
+		_draw_tank_timer(bar_x, timer_y, bar_w)
+		timer_y += TANK_BAR_GAP + TANK_BAR_HEIGHT
+	if nitro_active:
+		_draw_nitro_timer(bar_x, timer_y, bar_w)
 
 	if choosing_skill:
 		_draw_skill_choice()
@@ -470,6 +615,13 @@ func _draw_tank_timer(bar_x: float, bar_top: float, bar_w: float) -> void:
 	draw_rect(Rect2(bar_x, bar_y, bar_w * frac, TANK_BAR_HEIGHT), Color(0.42, 0.5, 0.22, 0.95), true)
 	draw_rect(Rect2(bar_x, bar_y, bar_w, TANK_BAR_HEIGHT), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
 
+func _draw_nitro_timer(bar_x: float, bar_top: float, bar_w: float) -> void:
+	var bar_y := bar_top + NITRO_BAR_GAP
+	draw_rect(Rect2(bar_x, bar_y, bar_w, NITRO_BAR_HEIGHT), Color(0.0, 0.0, 0.0, 0.35), true)
+	var frac: float = clamp(nitro_timer / NITRO_TOTAL_DURATION, 0.0, 1.0)
+	draw_rect(Rect2(bar_x, bar_y, bar_w * frac, NITRO_BAR_HEIGHT), Color(0.35, 0.72, 1.0, 0.95), true)
+	draw_rect(Rect2(bar_x, bar_y, bar_w, NITRO_BAR_HEIGHT), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
+
 func _draw_skill_choice() -> void:
 	var sz := car_size()
 	var icon_r: float = road.lane_width() * SKILL_ICON_RADIUS_FRAC
@@ -483,33 +635,25 @@ func _draw_skill_choice() -> void:
 	# captions — the pulse alone still reads as "a choice is live here".
 	var opponent_label: String = "" if bot != null else OS.get_keycode_string(key_skill_opponent)
 	var self_label: String = "" if bot != null else OS.get_keycode_string(key_skill_self)
-	_draw_skill_icon(Vector2(left_x, center_y), icon_r * pulse, Color(0.92, 0.28, 0.28), opponent_label, false)
-	_draw_skill_icon(Vector2(right_x, center_y), icon_r * pulse, Color(0.32, 0.82, 0.42), self_label, true)
+	_draw_skill_icon(Vector2(left_x, center_y), icon_r * pulse, Color(0.92, 0.28, 0.28), opponent_label, pending_opponent_skill)
+	_draw_skill_icon(Vector2(right_x, center_y), icon_r * pulse, Color(0.32, 0.82, 0.42), self_label, pending_self_skill)
 
-func _draw_skill_icon(center: Vector2, r: float, color: Color, key_label: String, is_self: bool) -> void:
+# `skill` is the entry of SELF_SKILLS/OPPONENT_SKILLS this side would
+# actually grant if picked right now, rolled in _roll_pending_skills, so the
+# glyph advertises the real offer instead of whatever the pool's first
+# member happens to be. Both sides used to hardcode their single skill's
+# art, which was only ever correct because both pools held exactly one entry.
+func _draw_skill_icon(center: Vector2, r: float, color: Color, key_label: String, skill: String) -> void:
 	draw_circle(center, r * 1.6, Color(color.r, color.g, color.b, 0.18))
 	draw_circle(center, r, Color(color.r, color.g, color.b, 0.95))
 	draw_circle(center, r, Color(1.0, 1.0, 1.0, 0.55), false, 2.0)
-	if is_self:
-		# Tank Mode is the only self skill so far, so its own pixel art
-		# doubles as the choice glyph — once SELF_SKILLS has more than one
-		# entry, this should show whichever skill the pool would actually
-		# grant rather than always the tank.
-		var tex_size: Vector2 = TANK_TEXTURE.get_size()
+	var glyph: Texture2D = SKILL_GLYPHS.get(skill, null)
+	if glyph != null:
+		var tex_size: Vector2 = glyph.get_size()
 		var icon_h: float = r * 1.5
 		var icon_w: float = icon_h * (tex_size.x / tex_size.y)
 		var icon_rect := Rect2(center - Vector2(icon_w, icon_h) * 0.5, Vector2(icon_w, icon_h))
-		draw_texture_rect(TANK_TEXTURE, icon_rect, false)
-	else:
-		# Taxi is the only opponent skill so far, so its own pixel art
-		# doubles as the choice glyph — once OPPONENT_SKILLS has more than
-		# one entry, this should show whichever skill the pool would
-		# actually grant, same as the self/tank icon above.
-		var tex_size: Vector2 = TAXI_TEXTURE.get_size()
-		var icon_h: float = r * 1.5
-		var icon_w: float = icon_h * (tex_size.x / tex_size.y)
-		var icon_rect := Rect2(center - Vector2(icon_w, icon_h) * 0.5, Vector2(icon_w, icon_h))
-		draw_texture_rect(TAXI_TEXTURE, icon_rect, false)
+		draw_texture_rect(glyph, icon_rect, false)
 	var font := ThemeDB.fallback_font
 	draw_string(font, Vector2(center.x - 40.0, center.y + r + 22.0), key_label, HORIZONTAL_ALIGNMENT_CENTER, 80.0, 14, Color.WHITE)
 
@@ -570,6 +714,16 @@ func start_round() -> void:
 	cannon_ready = true
 	recoil_offset = 0.0
 	recoil_timer = 0.0
+	# Unconditional, not gated on nitro_active: this is the one place that
+	# puts the player car's own draw scale and z_index back, and a restart
+	# mid-flight would otherwise leave the next round's car oversized and
+	# drawing over its traffic.
+	_deactivate_nitro()
+	nitro_ground_grace = 0.0
+	# choosing_skill can only become true after a pickup has rolled these,
+	# but starting the round with a valid pair means _resolve_skill_choice
+	# can never silently grant nothing.
+	_roll_pending_skills()
 	if fire_anim_tween != null and fire_anim_tween.is_valid():
 		fire_anim_tween.kill()
 	if fire_effect_sprite != null and is_instance_valid(fire_effect_sprite):
@@ -722,26 +876,38 @@ func _try_start_drift() -> void:
 func _collect_skill_pickup(pickup: SkillPickup) -> void:
 	pickup.queue_free()
 	# Also covers running over a second pickup before resolving the first —
-	# the choice just re-triggers (resets the glow pulse) rather than
-	# stacking or being ignored, since it never expired in the first place.
+	# the choice just re-triggers (resets the glow pulse, re-rolls what each
+	# side is offering) rather than stacking or being ignored, since it never
+	# expired in the first place.
+	_roll_pending_skills()
 	choosing_skill = true
 	skill_choice_pulse = 0.0
 
-# category is "opponent" (left icon/key) or "self" (right icon/key). Self
-# skills are picked from SELF_SKILLS and applied directly. Opponent skills
-# are picked from OPPONENT_SKILLS but can't be applied here — this board has
-# no reference to its rivals — so it just broadcasts the pick and lets Main
+# Decides what each side of the choice is offering. Called when a choice
+# appears, not when one is resolved, because the icons draw the result —
+# see pending_self_skill.
+func _roll_pending_skills() -> void:
+	pending_self_skill = SELF_SKILLS[randi() % SELF_SKILLS.size()]
+	pending_opponent_skill = OPPONENT_SKILLS[randi() % OPPONENT_SKILLS.size()]
+
+# category is "opponent" (left icon/key) or "self" (right icon/key). Which
+# skill each side grants was already decided when the choice appeared
+# (_roll_pending_skills) — this only applies it, so what the player picked
+# is exactly the glyph they were looking at. Self skills are applied
+# directly. Opponent skills can't be applied here — this board has no
+# reference to its rivals — so it just broadcasts the pick and lets Main
 # relay it to everyone else (see the opponent_skill_triggered signal comment
 # and receive_opponent_skill below).
 func _resolve_skill_choice(category: String) -> void:
 	choosing_skill = false
 	if category == "self":
-		var skill: String = SELF_SKILLS[randi() % SELF_SKILLS.size()]
-		if skill == "tank":
-			_activate_tank_mode()
+		match pending_self_skill:
+			"tank":
+				_activate_tank_mode()
+			"nitro":
+				_activate_nitro()
 	else:
-		var skill: String = OPPONENT_SKILLS[randi() % OPPONENT_SKILLS.size()]
-		opponent_skill_triggered.emit(skill)
+		opponent_skill_triggered.emit(pending_opponent_skill)
 
 # Entry point for an opponent skill some OTHER player picked, relayed here by
 # Main (see opponent_skill_triggered). A crashed/inactive board still gets
@@ -976,6 +1142,250 @@ func _spawn_debris(pos: Vector2, vehicle_w: float) -> void:
 		tw.tween_property(chip, "scale", Vector2(0.2, 0.2), TANK_DEBRIS_DURATION)
 		tw.set_parallel(false)
 		tw.tween_callback(chip.queue_free)
+
+# Nitro: lift off, rocket up the road, settle back down. See the NITRO_
+# constants for the design. The whole skill is one countdown (nitro_timer)
+# with every phase derived from it, deliberately not a Tween: the overlay
+# has to be repositioned against a car that is still steering on every
+# single frame, and a tween that owns the sequence is also the thing that
+# leaks an overlay sprite the moment something kills it mid-flight (§7's
+# fire_anim_tween invariant, and the session G leak that produced it).
+func _activate_nitro() -> void:
+	if nitro_active:
+		# Already up — refresh the surge rather than stacking, same rule as
+		# Tank Mode and as the pickup itself. Deliberately doesn't restart
+		# the full clock: re-running the charge phase would drop the car
+		# back onto the road and lift it again in mid-flight.
+		nitro_timer = NITRO_SURGE_DURATION + NITRO_LAND_DURATION
+		return
+	nitro_active = true
+	nitro_timer = NITRO_TOTAL_DURATION
+	player_car.z_index = NITRO_CAR_Z
+
+	# Unit circle, squashed into an ellipse by the node's own scale every
+	# frame (see _update_nitro_visuals) rather than rebuilt point by point.
+	var pts := PackedVector2Array()
+	for i in range(NITRO_SHADOW_POINTS):
+		var a: float = TAU * float(i) / float(NITRO_SHADOW_POINTS)
+		pts.append(Vector2(cos(a), sin(a)))
+	nitro_shadow = Polygon2D.new()
+	nitro_shadow.polygon = pts
+	nitro_shadow.color = Color(0.0, 0.0, 0.0, NITRO_SHADOW_ALPHA_GROUND)
+	nitro_shadow.z_index = -1 # on the asphalt, under the traffic the car is flying over
+	nitro_shadow.position = player_car.position
+	add_child(nitro_shadow)
+
+	# The source art is a glow painted on near-black, which is exactly what
+	# additive blending is for: the dark ground contributes nothing and the
+	# bright parts light up whatever they cross, so the energy reads as
+	# emitted light over the road rather than a decal stuck on top of it.
+	# It is also what lets the two layers stack without either occluding the
+	# other. (The frames do carry a real alpha channel — see §7's raw-PNG
+	# warning, neither supplied sheet had one — but alpha alone would only
+	# cut the background out, not make the thing glow.)
+	# Halo first, so the core draws over it at the same z_index.
+	nitro_halo_sprite = _make_nitro_layer_sprite()
+	nitro_effect_sprite = _make_nitro_layer_sprite()
+
+func _make_nitro_layer_sprite() -> Sprite2D:
+	var sprite := Sprite2D.new()
+	sprite.z_index = NITRO_EFFECT_Z
+	var mat := CanvasItemMaterial.new()
+	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	sprite.material = mat
+	# Placed on the car here as well as every frame in _update_nitro_visuals:
+	# a skill resolved from a path that runs *after* this board's _process for
+	# the frame would otherwise leave it sitting untextured at the board's
+	# origin until the next one.
+	sprite.position = player_car.position
+	add_child(sprite)
+	return sprite
+
+func _deactivate_nitro() -> void:
+	nitro_active = false
+	nitro_timer = 0.0
+	player_car.z_index = 0
+	player_car.scale = Vector2.ONE
+	if nitro_effect_sprite != null and is_instance_valid(nitro_effect_sprite):
+		nitro_effect_sprite.queue_free()
+	nitro_effect_sprite = null
+	if nitro_halo_sprite != null and is_instance_valid(nitro_halo_sprite):
+		nitro_halo_sprite.queue_free()
+	nitro_halo_sprite = null
+	if nitro_shadow != null and is_instance_valid(nitro_shadow):
+		nitro_shadow.queue_free()
+	nitro_shadow = null
+
+# 0 on the road, 1 at full height. Rises through the charge, holds flat
+# through the surge, settles back through the landing. One scalar drives the
+# car's y offset, its draw scale and the ground shadow together, so those
+# three can never disagree about how high off the road the car is.
+func _nitro_lift() -> float:
+	if not nitro_active:
+		return 0.0
+	var surge_end: float = NITRO_LAND_DURATION + NITRO_SURGE_DURATION
+	if nitro_timer > surge_end:
+		var t: float = clamp((NITRO_TOTAL_DURATION - nitro_timer) / NITRO_CHARGE_DURATION, 0.0, 1.0)
+		return 1.0 - pow(1.0 - t, 2.0) # off the road quickly, then floats
+	if nitro_timer > NITRO_LAND_DURATION:
+		return 1.0
+	var d: float = 1.0 - clamp(nitro_timer / NITRO_LAND_DURATION, 0.0, 1.0)
+	return 1.0 - d * d # hangs, then drops onto the road
+
+# How much of NITRO_SPEED_MULT is in force, 0..1. Deliberately lags the
+# lift: the source sheet gathers its energy before the laser forms, so the
+# car is already floating before it is actually moving, and the take-off
+# reads as a wind-up rather than as the launch itself.
+func _nitro_power() -> float:
+	if not nitro_active:
+		return 0.0
+	var surge_end: float = NITRO_LAND_DURATION + NITRO_SURGE_DURATION
+	if nitro_timer > surge_end:
+		var t: float = clamp((NITRO_TOTAL_DURATION - nitro_timer) / NITRO_CHARGE_DURATION, 0.0, 1.0)
+		return t * t * t
+	if nitro_timer > NITRO_LAND_DURATION:
+		return 1.0
+	return clamp(nitro_timer / NITRO_LAND_DURATION, 0.0, 1.0)
+
+# The car is off the road for the whole nitro window: it leaves on the first
+# frame and only touches down as the timer expires (see _nitro_lift's
+# landing curve). Named rather than spelled `nitro_active` at the call sites
+# because what those need to know is "are the wheels down", not "is the
+# skill running" — and those stop being the same question the moment a phase
+# is added that keeps the car on the road.
+func _nitro_airborne() -> bool:
+	return nitro_active
+
+func _update_nitro(delta: float) -> void:
+	if nitro_ground_grace > 0.0:
+		_update_nitro_landing(delta)
+	if not nitro_active:
+		return
+	nitro_timer -= delta
+	if nitro_timer <= 0.0:
+		_deactivate_nitro()
+		# Wheels are down as of this frame; the sweep itself has to wait a
+		# frame for the physics server, which is what the window is for.
+		nitro_ground_grace = NITRO_LANDING_GRACE
+
+# The landing shockwave. Coming down on top of traffic has to resolve
+# somehow, and both defaults are bad: the player either dies to a skill
+# meant to help them, or silently drives through a car that never fires
+# area_entered because it was *already* overlapping at touchdown. So the
+# landing destroys whatever it lands on. The sweep runs every frame of the
+# grace window rather than once, because get_overlapping_areas() reports the
+# last physics tick and cannot see an overlap created by a position written
+# from _process on this frame; _on_player_area_entered covers the mirror
+# case, a car that drives into the window under its own power.
+func _update_nitro_landing(delta: float) -> void:
+	nitro_ground_grace -= delta
+	for area in player_car.get_overlapping_areas():
+		if area is Car:
+			_destroy_vehicle(area)
+
+# Where the storyboard is right now: which of its six stages, and which
+# sub-frame inside that stage. Six stages across three phases (two per
+# phase), then the stage's own frames walked across its slice of the clock.
+func _nitro_frame() -> Vector2i:
+	var stage := 0
+	var t := 0.0
+	var span := 0.0
+	var surge_end: float = NITRO_LAND_DURATION + NITRO_SURGE_DURATION
+	if nitro_timer > surge_end:
+		var c: float = clamp((NITRO_TOTAL_DURATION - nitro_timer) / NITRO_CHARGE_DURATION, 0.0, 1.0)
+		stage = 0 if c < 0.5 else 1
+		t = c * 2.0 if c < 0.5 else (c - 0.5) * 2.0
+		span = NITRO_CHARGE_DURATION * 0.5
+	elif nitro_timer > NITRO_LAND_DURATION:
+		var into: float = surge_end - nitro_timer
+		if into < NITRO_LASER_FORM_TIME:
+			stage = 2
+			span = NITRO_LASER_FORM_TIME
+			t = into / span
+		else:
+			stage = 3
+			span = max(0.001, NITRO_SURGE_DURATION - NITRO_LASER_FORM_TIME)
+			t = (into - NITRO_LASER_FORM_TIME) / span
+	else:
+		var l: float = 1.0 - clamp(nitro_timer / NITRO_LAND_DURATION, 0.0, 1.0)
+		stage = 4 if l < 0.6 else 5
+		t = l / 0.6 if l < 0.6 else (l - 0.6) / 0.4
+		span = NITRO_LAND_DURATION * (0.6 if stage == 4 else 0.4)
+	var frames: Array = NITRO_STAGE_FRAMES[stage]
+	var n: int = frames.size()
+	if stage == NITRO_SUSTAIN_STAGE:
+		# The one stage held long enough for a still frame to go stale. It
+		# spools up through its frames once and then ping-pongs over them for
+		# the rest of the surge: parking on the last frame for three-plus
+		# seconds is exactly what made the whole effect read as a still image
+		# stuck to the car, which is why the multi-step sheet exists at all.
+		var step := int((t * span) / NITRO_SUSTAIN_FRAME)
+		var cycle: int = max(1, (n - 1) * 2)
+		var pos: int = step % cycle
+		return Vector2i(stage, pos if pos < n else cycle - pos)
+	return Vector2i(stage, clamp(int(t * n), 0, n - 1))
+
+# Places one layer of the effect against the car. Both layers go through
+# here, so the anchoring and the rotation exist once: all that differs
+# between them is which frame goes in and how big it is drawn (see
+# NITRO_CORE_LAYER / NITRO_HALO_LAYER). `radial` comes from the *core*
+# sub-frame for both layers, so the halo can never point a comet backwards
+# behind a ring.
+func _place_nitro_layer(sprite: Sprite2D, layer: Dictionary, tex: Texture2D, radial: bool, car_w: float, pulse: float) -> void:
+	var tex_size: Vector2 = tex.get_size()
+	sprite.texture = tex
+	sprite.modulate.a = float(layer["alpha"])
+	if radial:
+		var ring: float = (car_w * float(layer["aura_scale"]) * pulse) / float(layer["aura_src"])
+		sprite.scale = Vector2(ring, ring)
+		sprite.offset = Vector2.ZERO
+		sprite.rotation = 0.0
+	else:
+		var beam: float = (car_w * float(layer["beam_scale"]) * pulse) / float(layer["beam_src"])
+		sprite.scale = Vector2(beam, beam)
+		# Anchor the comet's bright core on the car instead of the frame's
+		# geometric centre. Offset is in local pre-scale px, so it holds at any
+		# scale — same trick as the tank's muzzle flash.
+		var head: Vector2 = layer["head"]
+		sprite.offset = Vector2((0.5 - head.x) * tex_size.x, (0.5 - head.y) * tex_size.y)
+		# The source comets run left to right with the head at the left. A
+		# quarter turn clockwise points the head up the road and streams the
+		# tail out behind the car: rotation is about the sprite's origin, which
+		# the offset above just moved onto the head, and +y is down here (§7),
+		# so +PI/2 maps the frame's own +x onto "backwards".
+		sprite.rotation = PI * 0.5
+	sprite.position = player_car.position
+
+
+# Called straight after player_car.position is written for this frame rather
+# than from the timer block at the top of _process, because the overlay and
+# the shadow have to be placed against the position the car actually has
+# this frame, not last frame's. A one-frame-stale read of exactly this kind
+# is what left the tree median permanently out of phase with the road — see
+# PROJECT_STATE §5 session O.
+func _update_nitro_visuals(sz: Vector2, ground_y: float) -> void:
+	var lift := _nitro_lift()
+	player_car.scale = Vector2.ONE * lerp(1.0, NITRO_LIFT_SCALE, lift)
+
+	if nitro_shadow != null and is_instance_valid(nitro_shadow):
+		# Stays down on the road at the car's own ground position. The
+		# growing gap between car and shadow is what makes the lift read as
+		# height rather than as the car merely being drawn bigger.
+		nitro_shadow.position = Vector2(car_x, ground_y)
+		var shrink: float = lerp(1.0, NITRO_SHADOW_SHRINK, lift)
+		nitro_shadow.scale = Vector2(sz.x * 0.46 * shrink, sz.y * 0.3 * shrink)
+		nitro_shadow.color = Color(0.0, 0.0, 0.0, lerp(NITRO_SHADOW_ALPHA_GROUND, NITRO_SHADOW_ALPHA_LIFTED, lift))
+
+	var f := _nitro_frame()
+	var stage: int = f.x
+	var sub: int = f.y
+	var radial: bool = NITRO_STAGE_RADIAL[stage][sub]
+	var pulse: float = 1.0 + NITRO_PULSE_AMOUNT * sin(nitro_timer * NITRO_PULSE_SPEED) * _nitro_power()
+	if nitro_halo_sprite != null and is_instance_valid(nitro_halo_sprite):
+		_place_nitro_layer(nitro_halo_sprite, NITRO_HALO_LAYER, NITRO_HALO_FRAMES[NITRO_HALO_INDEX[stage][sub]], radial, sz.x, pulse)
+	if nitro_effect_sprite != null and is_instance_valid(nitro_effect_sprite):
+		_place_nitro_layer(nitro_effect_sprite, NITRO_CORE_LAYER, NITRO_STAGE_FRAMES[stage][sub], radial, sz.x, pulse)
+
 
 # Spawns one taxi behind the player (see the TAXI_ constants comment for why
 # that means past board_height) and registers it in active_taxis so
@@ -1475,10 +1885,17 @@ func steer_coast_time() -> float:
 # boosting or taking recoil never moves the permanent difficulty ramp.
 func current_speed() -> float:
 	var s := SpeedRamp.speed_at(elapsed)
-	if boost_active:
+	# Boost is wheels-on-road. While nitro has the car in the air it neither
+	# applies nor drains (see _process), so the two can't compound into a
+	# ~4.7x road nobody can read, and the player keeps the bar they would
+	# otherwise have burned for nothing. Suppressed rather than capped
+	# because "you are not touching the road" is the reason, not a number.
+	if boost_active and not _nitro_airborne():
 		s *= _boost_speed_mult()
 	if recoil_timer > 0.0:
 		s *= TANK_RECOIL_SPEED_MULT
+	if nitro_active:
+		s *= lerp(1.0, NITRO_SPEED_MULT, _nitro_power())
 	return s
 
 func spawn_interval() -> float:
@@ -1513,6 +1930,9 @@ func _process(delta: float) -> void:
 	if recoil_timer > 0.0:
 		recoil_timer -= delta
 	recoil_offset = move_toward(recoil_offset, 0.0, TANK_RECOIL_RECOVERY_SPEED * delta)
+	# Phase/timer only — the nitro overlay is placed further down, once the
+	# car's position for this frame actually exists.
+	_update_nitro(delta)
 
 	var sz := car_size()
 	var tilt: float
@@ -1593,12 +2013,27 @@ func _process(delta: float) -> void:
 			var nose_target: float = sign(target_vx) * DRIFT_MAX_TILT if target_vx != 0.0 else player_car.rotation
 			tilt = move_toward(player_car.rotation, nose_target, DRIFT_NOSE_RESPONSE * delta)
 
-			_update_drift_trails(sz.x)
+			# Wheels off the road lay no rubber. The marks already down keep
+			# scrolling and fading normally, so the trail simply stops where
+			# the car left the asphalt. This guards the trail and not the
+			# nose on purpose: an airborne car is still being steered, it
+			# just isn't touching anything to skid on.
+			if not _nitro_airborne():
+				_update_drift_trails(sz.x)
 		else:
 			tilt = clamp(car_vx / max_steer_speed, -1.0, 1.0) * MAX_TILT
 
 	player_car.rotation = tilt
-	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0 + recoil_offset)
+	var ground_y: float = board_height - sz.y * 0.5 - 24.0 + recoil_offset
+	player_car.position = Vector2(car_x, ground_y - _nitro_lift() * NITRO_LIFT_PX)
+	if nitro_active:
+		# Engine shudder, purely on the drawn position — car_x is untouched, so
+		# it cannot leak into the steering, and it is re-derived from scratch
+		# every frame rather than accumulated. The effect layers hang off this
+		# same position, so they shake with the car.
+		var amp: float = NITRO_SHUDDER_PX * _nitro_power()
+		player_car.position += Vector2(randf_range(-amp, amp), randf_range(-amp, amp))
+		_update_nitro_visuals(sz, ground_y)
 
 	elapsed += delta
 	distance += current_speed() * delta
@@ -1636,7 +2071,13 @@ func _process(delta: float) -> void:
 				line.set_point_position(i, line.get_point_position(i) + Vector2(0, speed * delta))
 	drift_trails = drift_trails.filter(func(l): return is_instance_valid(l))
 
-	if boost_active:
+	if _nitro_airborne():
+		# Wheels off the road: a held boost neither drains nor burns (see
+		# current_speed) and a drift banks no charge. boost_active is left
+		# set on purpose, so a key still being held simply resumes working
+		# at touchdown instead of needing to be released and pressed again.
+		pass
+	elif boost_active:
 		boost_charge = max(0.0, boost_charge - BOOST_DRAIN_PER_SECOND * delta)
 		boost_flame_timer -= delta
 		if boost_flame_timer <= 0.0:
@@ -1655,7 +2096,10 @@ func _spawn_dash_ghost() -> void:
 		return
 	var ghost := Sprite2D.new()
 	ghost.texture = player_car.sprite.texture
-	ghost.scale = player_car.sprite.scale
+	# Composed with the car node's own scale, which nitro drives while the
+	# car is lifted — reading the inner sprite's scale alone would leave the
+	# trail at ground size behind an airborne car.
+	ghost.scale = player_car.sprite.scale * player_car.scale
 	ghost.rotation = player_car.rotation
 	ghost.position = player_car.position
 	ghost.modulate = Color(1.0, 1.0, 1.0, 0.4)
@@ -1901,6 +2345,17 @@ func _pick_traffic_kind() -> Dictionary:
 func _on_player_area_entered(area: Area2D) -> void:
 	if area is SkillPickup:
 		_collect_skill_pickup(area)
+		return
+	if _nitro_airborne():
+		# Flying over it. The car is not on the road, so traffic it passes
+		# above is neither a crash nor a kill — it just goes by underneath,
+		# which is the entire point of the lift.
+		return
+	if nitro_ground_grace > 0.0:
+		# Just came down: anything arriving inside the landing window goes
+		# under the wheels instead of ending the round. See
+		# _update_nitro_landing for why the window has to exist.
+		_destroy_vehicle(area as Car)
 		return
 	if tank_mode_active:
 		# Invincible: a vehicle the tank body touches is crushed instead of
