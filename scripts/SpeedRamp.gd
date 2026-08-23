@@ -9,10 +9,14 @@ class_name SpeedRamp
 ## in both `PlayerBoard.gd` and `LaneDivider.gd`, which had to be kept
 ## numerically identical by hand or the road and the tree median would scroll
 ## at different rates (that desync has already been shipped once — see
-## PROJECT_STATE §5 "LaneDivider never reset across rounds"). The ramp is no
-## longer two numbers you can eyeball for equality, so it lives in one place
-## and both callers ask it. Nothing here holds state: `elapsed` is passed in,
-## because each board and each divider still owns its own round timer.
+## PROJECT_STATE §5 "LaneDivider never reset across rounds"). Centralising it
+## here fixed the copy-paste but *not* the desync, because identical ramps
+## are not the same thing as identical distances: `PlayerBoard` multiplies
+## this by boost and tank recoil, and freezes entirely when its player
+## crashes. `LaneDivider` therefore no longer calls this at all — it follows
+## a board's odometer directly (see its header). `PlayerBoard` is now the
+## only caller, and `elapsed` is still passed in rather than held here so the
+## ramp stays a pure function of round time.
 ##
 ## ## The curve, and why it is not a straight line
 ##

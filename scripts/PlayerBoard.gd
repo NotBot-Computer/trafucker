@@ -46,6 +46,9 @@ var vertical_margin: float = 0.0
 # The road-speed and traffic-density ramp lives in SpeedRamp.gd — see
 # current_speed()/spawn_interval() below. It used to be four constants here
 # with two of them copy-pasted into LaneDivider.gd; tune the curve there.
+# LaneDivider no longer reads the ramp at all — the median follows this
+# board's `distance` odometer, so anything that moves the road (including
+# boost, recoil, and this board freezing on a crash) moves the trees with it.
 # How far past the bottom edge a vehicle travels before the shared obstacle
 # loop culls it. Named because the taxi's spawn has to stay inside it — see
 # TAXI_SPAWN_STAGGER_Y.

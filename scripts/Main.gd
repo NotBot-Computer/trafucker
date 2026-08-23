@@ -88,6 +88,11 @@ func _build_boards() -> void:
 			divider.width = BOARD_GAP
 			divider.height = board_height
 			divider.render_margin = vertical_margin
+			# The median follows a board's odometer instead of running its own
+			# copy of the speed ramp — see LaneDivider's header. Left board
+			# first: that is the one it matches exactly, with the right board
+			# as the fallback for when the left stops scrolling.
+			divider.neighbors = [boards[i], boards[i + 1]]
 			dividers_container.add_child(divider)
 			divider.position = Vector2(x, 0)
 			x += BOARD_GAP
