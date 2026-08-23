@@ -253,6 +253,7 @@ const TAXI_HEADROOM_RANDOM := 0.3 # of the time it ignores the best lane and jus
 # nothing. Distinct spawn lanes are what actually keeps a wave from
 # overlapping; this is only cosmetic separation on top of that.
 const TAXI_SPAWN_STAGGER_Y := 22.0
+const TAXI_SPAWN_CLEARANCE := 24.0 # breathing room at the spawn slot, so it doesn't arrive nose-to-tail either
 const TAXI_SIGNAL_WARNING := 0.35 # short and erratic vs. real traffic's LANE_CHANGE_INDICATOR_WARNING (1.3s) — this driver barely warns at all
 const TAXI_SIGNAL_TAIL := 0.2
 const TAXI_TILT_MAX := 0.4
@@ -990,29 +991,6 @@ func _spawn_taxi() -> void:
 	# offsetting from the player put it at arbitrary x, which is half of how
 	# the old one ended up loitering against a shoulder with no lane to call
 	# its own.
-	var lanes: Array = []
-	for i in range(lane_count):
-		lanes.append(i)
-	lanes.shuffle()
-	var player_lane := _nearest_lane(player_car.position.x)
-	var taken := {}
-	for other in active_taxis:
-		if is_instance_valid(other):
-			taken[int(other.get_meta("lane", -1))] = true
-	var spawn_lane := -1
-	for l: int in lanes:
-		if l != player_lane and not taken.has(l):
-			spawn_lane = l
-			break
-	if spawn_lane < 0: # more taxis than lanes — reuse one, the stagger below keeps them apart
-		for l: int in lanes:
-			if l != player_lane:
-				spawn_lane = l
-				break
-	if spawn_lane < 0:
-		spawn_lane = player_lane
-	var spawn_x: float = road.lane_center_x(spawn_lane)
-
 	# Just far enough down to be fully off-screen (its top edge clears
 	# board_height) without eating into the slack it has before the shared
 	# loop's bottom despawn threshold — it needs room to weave up through
@@ -1023,7 +1001,45 @@ func _spawn_taxi() -> void:
 	var base_y: float = board_height + sz.y * 0.6 + 24.0 + vertical_margin
 	var stagger: float = float(active_taxis.size()) * TAXI_SPAWN_STAGGER_Y
 	var despawn_y: float = board_height + OBSTACLE_DESPAWN_MARGIN + vertical_margin
-	taxi.position = Vector2(spawn_x, min(base_y + stagger, despawn_y - 30.0))
+	var spawn_y: float = min(base_y + stagger, despawn_y - 30.0)
+
+	# Which lane to come up in. Lane-snapped rather than "player_x ± a lane
+	# width": offsetting from the player put the taxi at arbitrary x, which
+	# is half of how the old one ended up loitering against a shoulder with
+	# no lane to call its own.
+	#
+	# Scored rather than filtered, so there is always an answer — on a busy
+	# board something has to give, and the weights are which constraint to
+	# drop last. Clearance outranks avoiding another taxi's lane because the
+	# strip the taxi spawns into is *below* the board, full of traffic on its
+	# way to being culled, and spawning inside one of those cars is a visible
+	# overlap from the very first frame; another taxi's registered lane may
+	# be nowhere near the spawn point at all.
+	var lanes: Array = []
+	for i in range(lane_count):
+		lanes.append(i)
+	lanes.shuffle() # ties below break randomly rather than always favouring lane 0
+	var player_lane := _nearest_lane(player_car.position.x)
+	var taken := {}
+	for other in active_taxis:
+		if is_instance_valid(other):
+			taken[int(other.get_meta("lane", -1))] = true
+	var spawn_lane := 0
+	var best_score := -1
+	for l: int in lanes:
+		var score := 0
+		if l != player_lane:
+			score += 4
+		if _spawn_slot_clear(road.lane_center_x(l), spawn_y, sz):
+			score += 2
+		if not taken.has(l):
+			score += 1
+		if score > best_score:
+			best_score = score
+			spawn_lane = l
+	var spawn_x: float = road.lane_center_x(spawn_lane)
+
+	taxi.position = Vector2(spawn_x, spawn_y)
 
 	taxi.set_meta("lane", spawn_lane)
 	# Comes in already flat out, which is what "arrives from behind" means in
@@ -1044,6 +1060,20 @@ func _spawn_taxi() -> void:
 	taxi.set_meta("tx_signal_timer", 0.0)
 	taxi.set_meta("tx_pending_target_x", spawn_x)
 	active_taxis.append(taxi)
+
+# Is the spawn slot at (x, y) free of any vehicle? Used only by _spawn_taxi.
+# The taxi enters below the bottom edge, which is exactly where traffic on
+# its way to the despawn line is sitting, and nothing else was stopping it
+# from materialising inside one of those cars.
+func _spawn_slot_clear(x: float, y: float, sz: Vector2) -> bool:
+	for other in obstacle_container.get_children():
+		if not (other is Car):
+			continue
+		if abs(other.position.x - x) >= (sz.x + other.width) * 0.5:
+			continue
+		if abs(other.position.y - y) < (sz.y + other.height) * 0.5 + TAXI_SPAWN_CLEARANCE:
+			return false
+	return true
 
 func _nearest_lane(x: float) -> int:
 	var best := 0
@@ -1132,7 +1162,14 @@ func _taxi_follow_limit(taxi: Car, mult: float, sz: Vector2) -> float:
 		if other == taxi or not (other is Car):
 			continue
 		var other_w: float = other.width
-		if abs(other.position.x - taxi.position.x) > (sz.x + other_w) * 0.45:
+		# 0.5, matching the actual sprite half-widths. This was 0.45, which
+		# left a ~2.5px band where two cars genuinely overlap on screen but
+		# the follow limit declined to see each other at all — so the taxi
+		# would close longitudinally right through a car it was fractionally
+		# offset from. Any lane-squeezing latitude has to come from
+		# TAXI_SIDE_GAP, which is about *sideways* room; buying it here just
+		# buys permission to overlap.
+		if abs(other.position.x - taxi.position.x) > (sz.x + other_w) * 0.5:
 			continue
 		var other_mult: float = other.get_meta("speed_mult", 1.0)
 		var dy: float = other.position.y - taxi.position.y
