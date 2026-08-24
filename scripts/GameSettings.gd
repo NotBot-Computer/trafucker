@@ -173,10 +173,26 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "bus", "width_frac": 0.6, "height_frac": 2.43, "weight": 5,
+		"kind": "bus", "width_frac": 0.6, "height_frac": 2.43, "weight": 3,
 		"speed_frac_min": 0.75, "speed_frac_max": 0.95,
+		# Transit and coach are two entries rather than two textures under one,
+		# because a coach really is the longer vehicle: 115x320 (aspect 2.78)
+		# against the transit's 115x279 (2.43). height_frac is per-kind and
+		# Car._rebuild() scales each axis independently, so one number cannot
+		# serve both — the one that fits the transit squashed every coach by
+		# 14.5% from 9eb90db until FleetProbe measured it (docs §5 session R).
+		# Same reasoning that kept the 3.74-aspect trailers out of the pickup
+		# entry. width_frac stays 0.6 for both: the two sprites are the same
+		# 115px wide, so they differ in length only. The single entry's old
+		# weight of 5 is split 3/2, so the table still totals 100.
 		"textures": [
 			preload("res://sprites/cars/bus_transit.png"),
+		],
+	},
+	{
+		"kind": "coach", "width_frac": 0.6, "height_frac": 2.78, "weight": 2,
+		"speed_frac_min": 0.75, "speed_frac_max": 0.95,
+		"textures": [
 			preload("res://sprites/cars/bus_coach.png"),
 		],
 	},
