@@ -72,9 +72,12 @@ var skin_colors: Array[Color] = [PLAYER_SKINS[0]["color"], PLAYER_SKINS[1]["colo
 # zero (a parked car matches the road's scroll exactly), and anything at or
 # above 1.0 would mean it's closing faster than a stationary object could —
 # i.e. driving backward — which reads as the car sliding the wrong way
-# across the lane markings. Heavier/slower-driving kinds (trucks, buses) sit
-# near the top of that range so you catch up to them quickly; nimbler kinds
-# (motorcycles) sit near the bottom so they roughly keep pace with you.
+# across the lane markings. Heavier/slower-driving kinds (trucks, trailers,
+# buses) sit near the top of that range so you catch up to them quickly;
+# nimbler kinds (sports cars, motorcycles) sit near the bottom so they roughly
+# keep pace with you.
+#
+# The weights below total 100, so each one reads directly as a percentage.
 const TRAFFIC_KINDS: Array[Dictionary] = [
 	{
 		"kind": "sedan", "width_frac": 0.62, "height_frac": 1.69, "weight": 30,
@@ -89,33 +92,34 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "suv", "width_frac": 0.68, "height_frac": 1.79, "weight": 18,
+		"kind": "suv", "width_frac": 0.68, "height_frac": 1.98, "weight": 16,
 		"speed_frac_min": 0.55, "speed_frac_max": 0.85,
 		"textures": [
-			preload("res://sprites/cars/suv_gold.png"),
-			preload("res://sprites/cars/suv_silver.png"),
-			preload("res://sprites/cars/suv_blue.png"),
-			preload("res://sprites/cars/suv_olive.png"),
 			preload("res://sprites/cars/suv_white.png"),
-			preload("res://sprites/cars/suv_gray.png"),
+			preload("res://sprites/cars/suv_black.png"),
+			preload("res://sprites/cars/suv_silver.png"),
+			preload("res://sprites/cars/suv_green.png"),
+			preload("res://sprites/cars/suv_tan.png"),
+			preload("res://sprites/cars/suv_navy.png"),
+			preload("res://sprites/cars/suv_forest.png"),
+			preload("res://sprites/cars/suv_red.png"),
+			preload("res://sprites/cars/suv_slate.png"),
+			preload("res://sprites/cars/suv_cream.png"),
 		],
 	},
 	{
-		"kind": "pickup", "width_frac": 0.62, "height_frac": 1.52, "weight": 14,
+		"kind": "pickup", "width_frac": 0.62, "height_frac": 2.23, "weight": 12,
 		"speed_frac_min": 0.6, "speed_frac_max": 0.9,
 		"textures": [
 			preload("res://sprites/cars/pickup_red.png"),
-			preload("res://sprites/cars/pickup_green.png"),
-			preload("res://sprites/cars/pickup_olivedark.png"),
 			preload("res://sprites/cars/pickup_blue.png"),
-			preload("res://sprites/cars/pickup_bluedark.png"),
-			preload("res://sprites/cars/pickup_brown.png"),
-			preload("res://sprites/cars/pickup_teal.png"),
-			preload("res://sprites/cars/pickup_olive.png"),
+			preload("res://sprites/cars/pickup_white.png"),
+			preload("res://sprites/cars/pickup_charcoal.png"),
+			preload("res://sprites/cars/pickup_tan.png"),
 		],
 	},
 	{
-		"kind": "van", "width_frac": 0.58, "height_frac": 1.55, "weight": 12,
+		"kind": "van", "width_frac": 0.58, "height_frac": 1.55, "weight": 11,
 		"speed_frac_min": 0.6, "speed_frac_max": 0.9,
 		"textures": [
 			preload("res://sprites/cars/van_blue.png"),
@@ -130,17 +134,46 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "truck", "width_frac": 0.66, "height_frac": 4.34, "weight": 8,
+		"kind": "sports", "width_frac": 0.6, "height_frac": 2.09, "weight": 9,
+		"speed_frac_min": 0.35, "speed_frac_max": 0.6,
+		# The quickest thing on the road, so it sits at the *bottom* of the speed_frac
+		# band with the motorcycles: a low fraction means it closes on you slowly,
+		# i.e. it is nearly keeping pace. See the block comment above.
+		"textures": [
+			preload("res://sprites/cars/sports_red.png"),
+			preload("res://sprites/cars/sports_blue.png"),
+			preload("res://sprites/cars/sports_silver.png"),
+			preload("res://sprites/cars/sports_yellow.png"),
+			preload("res://sprites/cars/sports_purple.png"),
+		],
+	},
+	{
+		"kind": "truck", "width_frac": 0.66, "height_frac": 4.18, "weight": 7,
 		"speed_frac_min": 0.75, "speed_frac_max": 0.95,
 		"textures": [
-			preload("res://sprites/cars/truck_blue.png"),
 			preload("res://sprites/cars/truck_red.png"),
+			preload("res://sprites/cars/truck_blue.png"),
 			preload("res://sprites/cars/truck_white.png"),
+			preload("res://sprites/cars/truck_green.png"),
 			preload("res://sprites/cars/truck_black.png"),
 		],
 	},
 	{
-		"kind": "bus", "width_frac": 0.60, "height_frac": 2.43, "weight": 6,
+		"kind": "trailer", "width_frac": 0.62, "height_frac": 3.74, "weight": 5,
+		"speed_frac_min": 0.78, "speed_frac_max": 0.95,
+		# A pickup towing something (boat / camper / flatbed / cargo box / jet-ski).
+		# Nearly as long as a semi and the slowest-driving kind in the table, which is
+		# the point of it: a rolling roadblock you have to commit to going around.
+		"textures": [
+			preload("res://sprites/cars/trailer_boat.png"),
+			preload("res://sprites/cars/trailer_camper.png"),
+			preload("res://sprites/cars/trailer_atv.png"),
+			preload("res://sprites/cars/trailer_cargo.png"),
+			preload("res://sprites/cars/trailer_jetski.png"),
+		],
+	},
+	{
+		"kind": "bus", "width_frac": 0.6, "height_frac": 2.43, "weight": 5,
 		"speed_frac_min": 0.75, "speed_frac_max": 0.95,
 		"textures": [
 			preload("res://sprites/cars/bus_transit.png"),
@@ -148,12 +181,19 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "motorcycle", "width_frac": 0.30, "height_frac": 2.07, "weight": 6,
+		"kind": "motorcycle", "width_frac": 0.34, "height_frac": 2.23, "weight": 5,
 		"speed_frac_min": 0.35, "speed_frac_max": 0.65,
 		"textures": [
 			preload("res://sprites/cars/moto_red.png"),
-			preload("res://sprites/cars/moto_maroon.png"),
-			preload("res://sprites/cars/moto_teal.png"),
+			preload("res://sprites/cars/moto_blue.png"),
+			preload("res://sprites/cars/moto_black.png"),
+			preload("res://sprites/cars/moto_green.png"),
+			preload("res://sprites/cars/moto_white.png"),
+			preload("res://sprites/cars/moto_yellow.png"),
+			preload("res://sprites/cars/moto_purple.png"),
+			preload("res://sprites/cars/moto_orange.png"),
+			preload("res://sprites/cars/moto_dirt.png"),
+			preload("res://sprites/cars/moto_classic.png"),
 		],
 	},
 ]
