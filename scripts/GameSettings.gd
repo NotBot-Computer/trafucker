@@ -148,7 +148,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "truck", "width_frac": 0.66, "height_frac": 4.18, "weight": 7,
+		"kind": "truck", "width_frac": 0.66, "height_frac": 5.07, "weight": 7,
 		"speed_frac_min": 0.75, "speed_frac_max": 0.95,
 		"textures": [
 			preload("res://sprites/cars/truck_red.png"),
