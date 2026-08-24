@@ -197,19 +197,19 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "motorcycle", "width_frac": 0.34, "height_frac": 2.23, "weight": 5,
+		# Still the original top-down bikes. motorlu.png (session Q) is drawn as a
+		# front elevation — you are looking at the rider's face, with the headlight
+		# and front wheel at the bottom of the frame — so in a top-down game its
+		# bikes ride straight at the player while every other vehicle drives away.
+		# No transform fixes that: rotating 180 puts the rider upside down, and a
+		# flipped front view is not a rear view. It needs top-down art, not a
+		# different transform of these.
+		"kind": "motorcycle", "width_frac": 0.30, "height_frac": 2.07, "weight": 5,
 		"speed_frac_min": 0.35, "speed_frac_max": 0.65,
 		"textures": [
 			preload("res://sprites/cars/moto_red.png"),
-			preload("res://sprites/cars/moto_blue.png"),
-			preload("res://sprites/cars/moto_black.png"),
-			preload("res://sprites/cars/moto_green.png"),
-			preload("res://sprites/cars/moto_white.png"),
-			preload("res://sprites/cars/moto_yellow.png"),
-			preload("res://sprites/cars/moto_purple.png"),
-			preload("res://sprites/cars/moto_orange.png"),
-			preload("res://sprites/cars/moto_dirt.png"),
-			preload("res://sprites/cars/moto_classic.png"),
+			preload("res://sprites/cars/moto_maroon.png"),
+			preload("res://sprites/cars/moto_teal.png"),
 		],
 	},
 ]
