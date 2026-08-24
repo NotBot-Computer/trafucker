@@ -41,7 +41,9 @@ Open the project folder in the Godot 4 editor (`godot --path .` from this direct
 
 ## Car art
 
-Cars are real sprites (`sprites/cars/*.png`) — top-down orthographic pixel art across 7 vehicle kinds: sedans (12 colors: 6 selectable player skins + 6 traffic-only), SUVs, pickups, vans, trucks, buses, and motorcycles. Most were cropped and cleaned up from a hand-drawn top-down vehicle reference sheet; motorcycles are code-generated since the reference's motorcycles were drawn front-on rather than top-down. `GameSettings.TRAFFIC_KINDS` holds each kind's textures, size ratios, and spawn weight (sedans most common, buses/motorcycles rarest); `PlayerBoard.gd` picks a weighted-random kind and texture for every spawned traffic `Car`.
+Cars are real sprites (`sprites/cars/*.png`) — top-down orthographic pixel art across 10 vehicle kinds: sedans (12 colors: 6 selectable player skins + 6 traffic-only), SUVs, pickups, vans, sports cars, semi trucks, pickups towing trailers, transit buses, coaches, and motorcycles. All of it was cropped and cleaned up from hand-drawn vehicle reference sheets. `GameSettings.TRAFFIC_KINDS` holds each kind's textures, size ratios, and spawn weight — the weights total 100, so each reads directly as a percentage of traffic: sedans 30%, SUVs 16%, pickups 12%, vans 11%, sports cars 9%, semi trucks 7%, trailers 5%, transit buses 3%, coaches 2%, motorcycles 5%. `PlayerBoard.gd` picks a weighted-random kind and texture for every spawned traffic `Car`.
+
+The two long kinds are the ones that change how a lane plays: a **semi truck** is 148px of road at a 5-lane board's scale and a **towed trailer** 124px, against a sedan's 56px, and both drive slowly enough that you close on them fast. **Sports cars** sit at the other end — they nearly keep pace with you, so they hang alongside instead of rushing past.
 
 Every `Car` (`scenes/Car.tscn`) has an empty `Sprite2D` child, so you can swap in your own art any time: open it in the editor and drag a PNG onto the Sprite2D's **Texture** property in the Inspector, or call `set_texture()` from code (see `PlayerBoard.gd` for examples). The placeholder shape (a colored `Polygon2D`) automatically hides once a texture is assigned. `Car.gd` scales whatever texture is provided to the car's collision size.
 
@@ -56,7 +58,7 @@ Traffic also moves at slightly different speeds per vehicle (`PlayerBoard._spawn
 ```
 project.godot
 sprites/
-  cars/               generated top-down vehicle PNGs (sedans, SUVs, pickups, vans, trucks, buses, motorcycles)
+  cars/               top-down vehicle PNGs (sedans, SUVs, pickups, vans, sports cars, semi trucks, trailers, buses, motorcycles)
   road/               road + median tile textures, cropped from one source image
 scenes/
   MainMenu.tscn       title screen, Play button
