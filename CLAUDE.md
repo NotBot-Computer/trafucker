@@ -20,6 +20,22 @@ cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --quit res:
 
 Let the bot play it for you (`scripts/BotDriver.gd`): **1-4** hands player 1-4's board to the AI, or takes it back — on the skin-select screen or at any point mid-round — and **5** cycles EASY/NORMAL/HARD. The player-count screen also has a **1 PLAYER vs BOT** button. Turn every board over to it and the round plays itself, which is the fastest way to watch a change work without holding the keys. Note this is still manual playtesting: it verifies nothing on its own, you have to watch it.
 
+**Pile Up (the tower mode) has no bot**, so there is nothing to hand it to — but it does have a headless harness that plays whole matches and checks the physics and the turn loop:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/TowerProbe.tscn -- --spread=0.3
+```
+`--spread` is how much of the legal aim range a brick may be steered to: `1.0` models nonsense, `0.1`-`0.3` models a player who is trying. Run both — the interesting signal is the *difference* between them, which is what caught the drop-speed bug in docs/PROJECT_STATE.md §5 session S. Note it sets the commanded position directly rather than pressing keys, so it says nothing about the half-cell step, the dash, the hold-repeat or the soft drop, and nothing at all about how the mode feels.
+
+There is also a much smaller harness for Pile Up's lateral input, which asserts that a dash is *distinguishable* from two ordinary taps rather than that it moves any particular distance (the dash once shipped moving the right distance at the wrong speed, and was invisible — see docs/PROJECT_STATE.md §5 session S):
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 60 res://scenes/dev/DashProbe.tscn
+```
+
+And one for Pile Up's landings, which asks whether anything is actually under a brick at the moment the player stops being able to steer it:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/LandingProbe.tscn
+```
+
 For measuring bot behaviour rather than looking at it, `--fixed-fps` disables real-time sync and runs the simulation as fast as the machine allows, so a 60-second round takes a few seconds of wall clock:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 120 res://scenes/Main.tscn

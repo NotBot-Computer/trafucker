@@ -1,18 +1,24 @@
 # Traffic Tower
 
-A local split-screen party game: dodge oncoming traffic, don't crash, and outlast your friends. Styled after retro top-down pixel racers, with a "many small competitive modes" structure inspired by *Tricky Towers*.
+A local party game about cars, played two ways: race them, or stack them. Styled after retro top-down pixel art, with a "many small competitive modes" structure inspired by *Tricky Towers*.
 
 Built in **Godot 4**.
 
-## Current mode
+## Modes
 
-**Don't Crash** — steer between lanes, avoid traffic, survive as long as possible. Speed ramps up over time. Whoever covers the most distance before crashing wins the round.
+**Don't Crash** — split-screen. Steer between lanes, avoid traffic, survive as long as possible. Speed ramps up over time. Whoever covers the most distance before crashing wins the round.
+
+**Pile Up** — one shared tower. Players take turns steering car-shaped bricks down onto a single narrow platform, under real physics. When everything stops moving, anything that fell off costs the player who dropped it a life. Three lives each; last builder standing wins.
 
 ## Playing it
 
-Launch the game and you'll get: **Play** → pick 2, 3, or 4 players → each player cycles and locks in a car color → race starts. Each board always has 5 lanes, regardless of player count.
+Launch the game and you'll get: pick a mode → pick 2, 3, or 4 players → each player cycles and locks in a color → off you go.
+
+In **Don't Crash** that colour is your car and each board always has 5 lanes, regardless of player count. In **Pile Up** it marks your lives and whichever brick is currently in the air — every brick already on the pile looks the same, whoever put it there.
 
 ### Playing alone, or against the computer
+
+*(Don't Crash only — there is no Pile Up AI yet.)*
 
 Pick **1 PLAYER vs BOT** on the player-count screen and you'll race a computer-driven opponent.
 
@@ -22,12 +28,29 @@ The AI drives the same car with the same physics you do — it steers, dashes, d
 
 ## Controls
 
-| Player | Left | Right | Confirm (skin select) |
-| ------ | ---- | ----- | ---------------------- |
-| P1     | A    | D     | W                       |
-| P2     | ←    | →     | ↑                       |
-| P3     | F    | H     | T                       |
-| P4     | J    | L     | I                       |
+| Player | Left | Right | Down | Confirm / Dash | Rotate ccw / cw |
+| ------ | ---- | ----- | ---- | -------------- | --------------- |
+| P1     | A    | D     | S    | W              | Q / E           |
+| P2     | ←    | →     | ↓    | ↑              | , / .           |
+| P3     | F    | H     | G    | T              | R / Y           |
+| P4     | J    | L     | K    | I              | U / O           |
+
+### Pile Up
+
+Your brick starts falling the moment it appears — there is no drop button, just a few seconds to place it.
+
+- **Left / right** move it **exactly half a block**. Hold to repeat.
+- **Confirm** dashes **exactly one whole block** in the direction you're holding (or the last one you pressed) — same distance as two taps, but covered in one fast sweep with a trail behind it, so you can see it land.
+- **Rotate keys** turn it a quarter turn at a time.
+- **Down** makes it fall faster, once you like the line.
+
+You can walk a brick up to two blocks past the platform edge if you want to — that is the whole risk/reward of the mode, and yes, you can walk one clean off the side and lose it.
+
+Coming up against the side of a taller part of the tower doesn't end your turn. You keep steering for as long as you like and can always back out of it — a turn ends when something is actually *underneath* the brick, and at no other time.
+
+The moment the brick touches down it stops being yours and becomes ordinary physics: it tips, slides and settles, and so does everything under it. The turn does not end when it lands, it ends when the *whole tower* has stopped moving — so a brick that settles innocently and then shoves the pile over five seconds later still counts against you.
+
+### Don't Crash
 
 Double-tap left or right (quickly, twice back-to-back) to **dash** exactly one lane over — a fast eased snap with a fading afterimage trail, on a short per-player cooldown.
 
@@ -38,6 +61,20 @@ Press **Enter** to restart after a round ends. Press **Esc** during a round to r
 ## Running it
 
 Open the project folder in the Godot 4 editor (`godot --path .` from this directory, or `Import` from the project manager), then press **F5** / the Play button.
+
+## Backdrop and ground
+
+Pile Up plays in front of `sprites/bg/tower_backdrop.png`, in two layers cut from that one image.
+
+The **backdrop** is drawn in screen space on its own layer and scrolled at a fraction of the camera. Screen-space rather than part of the world on purpose: the camera pans up without limit as the tower grows, so world-space art would be left behind within a few bricks. Above the picture's own top edge the sky simply continues in the image's own sky colour, so a tall tower climbs into open sky instead of into a hard edge.
+
+The **near ground** is the grass shelf from the bottom of the same image, drawn in world space at the foot of the tower and *in front of* the bricks — so a brick knocked off the tower slides down behind the grass and is gone. It tracks the camera exactly, because it is where the tower actually stands. The two layers are aligned at the start of a match and separate as the tower climbs, near ground falling away faster than far.
+
+The tower itself stands on a rock outcrop whose body is cut from the same picture's earth band, so it is literally made of the stone the rest of the world is made of rather than painted to look like it.
+
+## Brick art
+
+Pile Up's seven bricks (`sprites/blocks/piece_*.png`) are the standard tetromino shapes drawn as clusters of top-down cars, cropped from one supplied sheet by `scripts/dev/extract_blocks.py`. That script removes the sheet's background *and its drop shadows* by flood-filling in from the border — neither can be separated from the cars' own black outlines by brightness alone, but only one of them is reachable from outside the art. It also normalises every piece to an exact grid of square cells, since the source sheet draws its cells anywhere from 4% to 14% taller than they are wide; `GameSettings.TETROMINOES` can then give each piece its collision as plain cell-unit rectangles.
 
 ## Car art
 
@@ -60,14 +97,18 @@ project.godot
 sprites/
   cars/               top-down vehicle PNGs (sedans, SUVs, pickups, vans, sports cars, semi trucks, trailers, buses, coaches, motorcycles)
   road/               road + median tile textures, cropped from one source image
+  blocks/             the seven car-tetromino bricks used by Pile Up
+  bg/                 Pile Up's parallax backdrop
 scenes/
-  MainMenu.tscn       title screen, Play button
+  MainMenu.tscn       title screen, mode picker
   PlayerSelect.tscn    choose 2/3/4 players
   SkinSelect.tscn      each player picks + locks in a car sprite
   Main.tscn            N PlayerBoards side by side, round state, restart UI
   PlayerBoard.tscn     one player's road + car + obstacle spawner
   Car.tscn             sprite/placeholder + collision, reused for player and traffic
   LaneDivider.tscn     grass + trees median between adjacent player boards
+  TowerMode.tscn       Pile Up: the shared tower, its platform and its HUD
+  TowerPiece.tscn      one car-tetromino brick (a real RigidBody2D)
 scripts/
   GameSettings.gd      autoload: player count, chosen skins, sprite tables, key bindings
   MainMenu.gd
@@ -79,10 +120,18 @@ scripts/
   Road.gd               lane math and scrolling road-texture rendering
   Car.gd                 swaps between placeholder shape and an assigned texture
   LaneDivider.gd         scrolling grass/tree median renderer
+  TowerMode.gd          Pile Up: turn order, drop/settle/resolve loop, lives, camera
+  TowerPiece.gd         one brick: collision from cell rects, physics material, fall cap
+  TowerMode.gd          (see above) also owns the shape-query movement model
+  TowerHUD.gd           Pile Up's side-column panels — lives, next brick, controls
+  TowerBackground.gd    Pile Up's parallax backdrop
+  TowerGround.gd        Pile Up's near ground — a foreground layer bricks fall behind
+  dev/                  headless measurement harnesses, not part of the game
 ```
 
 ## Roadmap
 
-- More competitive mini-modes beyond "don't crash" (time attack, reverse traffic, narrowing lanes, item pickups, etc.)
+- More competitive mini-modes beyond the two above (time attack, reverse traffic, narrowing lanes, item pickups, etc.)
+- An AI that can play Pile Up, so it has the same hand-it-to-a-bot testing loop Don't Crash has
 - Gamepad support
 - Export to web (HTML5) and/or desktop builds
