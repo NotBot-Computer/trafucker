@@ -1,0 +1,992 @@
+extends Node2D
+
+## Pile Up — the second game mode (GameSettings.MODE_TOWER).
+##
+## Every player builds the *same* tower, one brick at a time, on one narrow
+## platform. Whoever is on the clock steers a car-tetromino down onto the
+## stack; once everything has stopped moving, anything that fell off the
+## platform during that turn costs the player who dropped it a life. Last
+## player with a life left wins. That is the whole rule set, and the shared
+## tower is what makes it different from Tricky Towers' survival mode, which
+## it is otherwise modelled on: you are not racing your own pile, you are
+## inheriting whatever the last player left you, and knocking someone else's
+## brick off is your problem, not theirs.
+##
+## ## Why it is turn-based
+##
+## The fault rule ("the one who drops a brick loses a life") only has an
+## answer if exactly one player can be responsible for the state of the tower
+## at a time. With everyone dropping at once onto one stack, a collapse has
+## no author. So turns are not a simplification of the design — they are what
+## makes the scoring rule well-defined.
+##
+## ## How a brick is flown down
+##
+## The brick descends on its own from the moment it appears, slowly, and the
+## turn ends when it touches something. There is no "release" button: the
+## player's job is to steer and turn it during the fall, and `down` makes it
+## fall faster once they are happy with the line.
+##
+## Sideways movement is **discrete**, not a slide — a press moves the brick
+## exactly half a cell, and the dash button moves it exactly one, faster and
+## with an afterimage so the two can be told apart. Since a brick starts at
+## x=0 and every command is a multiple of half a cell, it stays on an exact
+## half-cell lattice for its whole descent, which is what makes it possible
+## to line an edge up with the tower below by counting presses instead of by
+## eye.
+##
+## While it is under the player's control the brick is frozen AND out of the
+## collision world (see TowerPiece.set_held), so it can never shove the tower
+## it is about to land on. Contact is instead resolved by *asking*: every
+## move — sideways, rotational, downward — is tested with `intersect_shape`
+## against where the brick would be, and refused if that space is occupied. A
+## refused downward move is what "landed" means, and at that instant the
+## brick is handed to the physics engine exactly where it stopped.
+##
+## That is also why exact discrete movement is possible at all. A brick that
+## was really falling could not be stepped a half cell sideways without
+## risking it ending up inside the tower; a brick whose every move is
+## permission-checked can be put anywhere that is empty, precisely.
+##
+## ## Structure
+##
+## Nothing here is shared with Don't Crash except GameSettings, the menu flow
+## and the key bindings. That mode is N independent scrolling boards with
+## Area2D traffic and no rigid bodies at all; this one is a single world with
+## real RigidBody2D physics. They have no geometry, camera model or update
+## loop in common, so this is a separate scene and script rather than a
+## variant of Main/PlayerBoard — see docs/PROJECT_STATE.md.
+
+const PIECE_SCENE := preload("res://scenes/TowerPiece.tscn")
+
+# --- Playfield -------------------------------------------------------------
+# The world origin IS the platform's top surface, so the tower grows toward
+# -y and "how tall is it" is just -stack_top_y. Every constant below is in
+# those units.
+#
+# Cell size is set by the *vertical* budget, not the horizontal one. The
+# viewport is 1500x800, so width is never the constraint — a tower is only
+# ever a few cells wide — while height decides how much of the tower you can
+# see at once. At 38px about twenty-one cells fit on screen, which is what
+# lets a tall tower read as tall; the first version at 58px could show only
+# five and a half cells of tower beneath the brick in play, so the tower kept
+# scrolling out from under itself.
+const CELL := 38.0
+const PLATFORM_CELLS := 5.0
+const PLATFORM_THICKNESS := 30.0 # the collision slab; the drawn outcrop runs much deeper
+
+# World y of the near ground — the grass shelf the outcrop grows out of, and
+# the surface the whole scene is anchored to. TowerGround draws the band here
+# and TowerBackground lines its own ground line up with it, so the outcrop
+# stands in real ground instead of on a table. Also the height of the
+# outcrop, since the tower's surface is y = 0.
+const GROUND_Y := 120.0
+const OUTCROP_FLARE := 26.0 # how much wider the rock is where it meets the ground
+const OUTCROP_BURY := 40.0 # how far it continues below the ground line, so it never floats
+
+# How far past the platform's own edge a brick's outer edge may be steered.
+# This is the mode's main difficulty knob: it is what lets a player choose to
+# overhang deliberately, and it is measured against the brick's *rotated*
+# width so a long piece cannot be walked further out than a short one.
+#
+# Note this bound keeps the half-cell lattice exact rather than truncating
+# it: the limit works out to (2.5 + 2.0 - half the brick's width in cells)
+# cells, and a brick's half-width is always a whole number of half cells, so
+# clamping lands on the lattice instead of somewhere between two steps.
+const AIM_BOUND_CELLS := 2.0
+
+# Sideways movement is stepped, not slid. A press is half a cell; holding a
+# direction repeats that step after a delay, so long travel doesn't mean
+# mashing. A whole cell is the dash, on its own button.
+#
+# The dash was a double-tap first — Don't Crash's lane-dash gesture, reused
+# because it was already this game's vocabulary for "one discrete unit over".
+# It is a button now because a double-tap and two deliberate half-steps are
+# the same keypresses, so the game had to guess which one was meant from
+# timing alone, and guessed wrong often enough to be worth removing. A
+# separate key cannot be misread.
+const STEP_CELLS := 0.5
+const DASH_CELLS := 1.0
+# How long after a direction press the dash still knows which way you meant,
+# so "tap right, then dash" works as well as holding right and dashing.
+const DASH_DIR_GRACE := 0.45
+const HOLD_REPEAT_DELAY := 0.30
+const HOLD_REPEAT_INTERVAL := 0.08
+# How fast the brick chases the commanded position. High enough that a step
+# reads as a snap rather than a glide, low enough that it is still a movement
+# and not a teleport — and every frame of it is still collision-checked.
+const FOLLOW_SPEED := 620.0
+
+# A dash has to be *perceptible*, and the first version of it was not.
+#
+# It moved the brick a whole cell, correctly — but it got there by adding the
+# second half of a cell to the half the first tap had already moved, at the
+# same speed. So a double-tap and two ordinary taps produced the same
+# distance at the same pace, and a measurement of both came back 1.00 cells
+# and 1.00 cells. There was nothing to feel, which is indistinguishable from
+# the input not working, and that is exactly what it was reported as.
+#
+# The distance was never the problem — the *sameness* was. So the dash moves
+# a whole cell where a press moves half, covers that ground about twice as
+# fast, and leaves an afterimage. The window is also a little wider than it was,
+# since a double-tap nobody can confirm landed is a double-tap people give
+# up on.
+const DASH_FOLLOW_SPEED := 1400.0
+const DASH_GHOST_TIME := 0.22
+const DASH_GHOST_COPIES := 4
+const DASH_STREAKS := 4 # speed lines drawn back along the path
+const DASH_RIM_WIDTH := 7.0 # outline flash at the landing position; only its outer half shows
+
+const ROTATE_LERP := 18.0
+
+# Spawn height above the stack, squeezed from both ends. The floor is the
+# tallest half-extent any brick can have (a vertical I piece reaches 2 cells
+# below its own centre); the ceiling is the top of the screen, since the
+# camera holds the stack top at CAM_STACK_TOP_FRAC and the brick appears a
+# fixed distance above that. 7 cells puts a vertical I piece's top edge at
+# roughly y=42 on screen, and gives about 4.5 seconds of descent to steer in.
+const SPAWN_CLEARANCE := CELL * 7.0
+const DESCEND_SPEED := 58.0 # px/s, ~1.5 cells/s
+const SOFT_DROP_SPEED := 430.0 # px/s while `down` is held
+# An anti-deadlock backstop, and deliberately NOT a gameplay rule.
+#
+# The rule is: a turn ends when something is underneath the brick, never
+# before. A brick pressed against the flank of a taller stack is touching
+# something, but nothing is holding it up, so the player keeps steering and
+# can always back out of it — every wedged position has an exit, since the
+# brick got there by descending and can move back the way it came.
+#
+# This exists only for the case that exit is somehow unavailable, so a turn
+# cannot hang forever. At 1.5s it was short enough to fire during ordinary
+# play and take the brick away mid-placement, which is exactly the complaint
+# it was supposed to fix. Six seconds is long enough that reaching it means
+# someone is holding a direction into a wall on purpose.
+const WEDGE_GRACE := 6.0
+
+# --- Turn structure --------------------------------------------------------
+const START_LIVES := 3
+const RESOLVE_PAUSE := 1.2 # beat between "everything stopped" and the next brick, so the result reads
+
+# A turn ends when the whole world is at rest, not when the brick lands: the
+# interesting case is a brick that lands cleanly and then shoves the tower
+# over three seconds later, and resolving on contact would score that against
+# the wrong player. SETTLE_TIMEOUT is the backstop for a tower that has found
+# some slow perpetual wobble it will not come out of.
+const SETTLE_LINEAR := 16.0
+const SETTLE_ANGULAR := 0.18
+const SETTLE_HOLD := 0.5
+const SETTLE_TIMEOUT := 9.0
+
+# Losing a brick and removing a brick are two different moments, and
+# conflating them cost six seconds a turn.
+#
+# LOST_* is where a brick stops counting: below the underside of the slab
+# there is nothing but sky, so a brick past it can never rejoin the tower and
+# is scored as fallen immediately. DESPAWN_* is where it is finally freed,
+# long after it has left the screen.
+#
+# Splitting them matters because a brick shrugged off a twenty-cell tower has
+# to fall about 900px before it is anywhere near gone, which at MAX_FALL_SPEED
+# is roughly six seconds — and a turn ends when everything is at rest, so
+# waiting for that debris meant the settle timeout firing on 6.5% of turns
+# (twelve times in one measured match) with the player watching "settling..."
+# the whole time. Counted early and freed late, the turn ends when the *tower*
+# has stopped, which is what the rule was always about.
+#
+# Both are fixed world values rather than camera-relative on purpose: the
+# camera pans up with the tower, so a camera-relative floor would eventually
+# rise above the platform itself and cull the bricks the tower stands on.
+const LOST_Y := PLATFORM_THICKNESS + 40.0
+const LOST_X := 900.0
+const DESPAWN_Y := 600.0 # under the ground band and off screen; TowerGround hides the moment it goes
+const DESPAWN_X := 1600.0
+
+# --- Camera ----------------------------------------------------------------
+# Two framings, and the camera takes whichever sits lower.
+#
+# CAM_GROUND_FRAC is the resting shot: the platform low in frame with the
+# ground under it, which is where a match starts and stays while the tower is
+# short. CAM_STACK_TOP_FRAC is the climbing shot, which only takes over once
+# the tower is tall enough that the resting shot would push the descending
+# brick off the top of the screen.
+#
+# They have to be separate. A single fraction has to be low enough to sit the
+# platform on the ground *and* high enough to leave the brick room to fall,
+# and no one number is both — the first version used 0.48 for everything,
+# which is why the platform floated in the middle of the screen.
+const CAM_GROUND_FRAC := 0.70
+const CAM_STACK_TOP_FRAC := 0.48
+const CAM_LERP := 3.5
+# How much of the camera's climb the backdrop follows. Anything below 1 reads
+# as depth; this value takes a twenty-cell tower almost exactly to the top of
+# the backdrop art, so a full-height tower has climbed the whole picture
+# rather than a fraction of it.
+const BACKDROP_PARALLAX := 0.28
+
+# --- Foreground ------------------------------------------------------------
+# Everything drawn over the backdrop is dark, not light. The first version of
+# this mode drew white guide lines against the project's dark clear colour;
+# over a bright sky they were invisible.
+const GUIDE_SPACING_CELLS := 4.0
+const GUIDE_COLOR := Color(0.10, 0.13, 0.28, 0.10)
+const EDGE_LINE_COLOR := Color(0.10, 0.12, 0.26, 0.26)
+# The outcrop is built from the backdrop's own earth band rather than painted
+# in flat colours. Flat fills were the first attempt and they read as a prop
+# sitting in front of a painting: everything around them is detailed pixel
+# art, so a smooth tan trapezoid is the one object on screen with no texture.
+# Cutting it from the same image the ground is cut from makes it the same
+# stone as the world it stands in — the §7 "derive new art from the existing
+# art" rule, applied to something drawn rather than to a sprite.
+#
+# The source window is the stone/dirt layer under the near grass: full-width
+# in the art, so any horizontal slice of it is usable, and already the
+# material this world's ground is made of.
+const ROCK_SRC := Rect2(600.0, 962.0, 260.0, 62.0)
+const ROCK_SLICE := 8.0 # px of outcrop per drawn slice; small enough to follow the taper
+const ROCK_SHADE_RIGHT := Color(0.0, 0.0, 0.0, 0.22)
+const ROCK_SHADE_LEFT := Color(1.0, 0.94, 0.82, 0.13)
+const GRASS := Color8(101, 169, 30)
+const GRASS_LIGHT := Color8(139, 198, 44)
+const GRASS_DARK := Color8(38, 120, 23)
+const DROP_GUIDE_ALPHA := 0.13
+# A soft shaded band marking the column the tower lives in — the same job the
+# per-player lane tints do in Tricky Towers. Two reasons: the backdrop is
+# busy pixel art and the bricks need something quieter directly behind them,
+# and the band is the only thing that shows where the legal play area ends
+# once the platform has scrolled off the bottom. Kept dark rather than light,
+# because a light wash disappears against a bright sky.
+const COLUMN_SHADE := Color(0.06, 0.08, 0.20, 0.10)
+
+@onready var camera: Camera2D = $Camera2D
+@onready var platform: StaticBody2D = $Platform
+@onready var platform_shape: CollisionShape2D = $Platform/CollisionShape2D
+@onready var pieces: Node2D = $PiecesContainer
+@onready var backdrop: TowerBackground = $Backdrop/Sky
+@onready var ground: TowerGround = $Foreground/Ground
+@onready var hud: TowerHUD = $HUD/Board
+@onready var overlay: Control = $HUD/Overlay
+@onready var overlay_title: Label = $HUD/Overlay/OverlayTitle
+@onready var overlay_body: Label = $HUD/Overlay/OverlayBody
+
+var state := "piloting" # piloting -> settling -> resolving -> piloting, or gameover
+var lives: Array[int] = []
+var active_slot: int = 0
+var active_piece: TowerPiece = null
+var next_index: int = 0
+
+var aim_x := 0.0 # the commanded x; the brick chases it at FOLLOW_SPEED
+var aim_steps := 0 # quarter turns; free rotation only starts once the brick lands
+var last_dir := 0 # most recent direction pressed, for a dash with no direction held
+var last_dir_timer := 0.0
+var dash_active := false # true while a dash is still travelling, for the faster follow
+var dash_ghost_x := 0.0
+var dash_ghost_timer := 0.0
+var hold_dir := 0
+var hold_timer := 0.0
+
+var settle_timer := 0.0
+var wedge_timer := 0.0
+var fall_timer := 0.0
+var resolve_timer := 0.0
+var fallen_this_turn := 0
+
+var stack_top_y := 0.0
+var cam_y := 0.0
+var cam_start_y := 0.0
+var best_height := 0
+var bricks_placed := 0
+
+func _ready() -> void:
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(PLATFORM_CELLS * CELL, PLATFORM_THICKNESS)
+	platform_shape.shape = rect
+	platform_shape.position = Vector2(0.0, PLATFORM_THICKNESS * 0.5)
+
+	# The platform grips exactly as hard as a brick does. A slicker base
+	# would make the first brick of every tower the hardest one to place,
+	# which is backwards.
+	var mat := PhysicsMaterial.new()
+	mat.friction = TowerPiece.FRICTION
+	mat.bounce = TowerPiece.BOUNCE
+	mat.rough = true
+	platform.physics_material_override = mat
+
+	camera.zoom = Vector2.ONE
+	camera.make_current()
+
+	# The near ground and the far backdrop are cut from one image and have to
+	# agree about where the ground is: TowerGround puts it at GROUND_Y in the
+	# world, and the backdrop is told where that lands on screen in the
+	# resting shot, which is the only place they are required to line up.
+	var view: Vector2 = get_viewport().get_visible_rect().size
+	ground.configure(GROUND_Y, view.x)
+	backdrop.set_ground_screen_y(GROUND_Y + CAM_GROUND_FRAC * view.y)
+
+	_start_match()
+
+# --- Match / turn flow -----------------------------------------------------
+
+func _start_match() -> void:
+	for c in pieces.get_children():
+		pieces.remove_child(c)
+		c.queue_free()
+	active_piece = null
+
+	lives = []
+	for _i in range(GameSettings.player_count):
+		lives.append(START_LIVES)
+
+	stack_top_y = 0.0
+	best_height = 0
+	bricks_placed = 0
+	fallen_this_turn = 0
+	cam_y = _camera_target()
+	cam_start_y = cam_y
+	camera.position = Vector2(0.0, cam_y)
+	backdrop.set_scroll(0.0)
+	next_index = randi() % GameSettings.TETROMINOES.size()
+	overlay.visible = false
+	hud.clear_message()
+
+	# So the first _begin_turn() advances onto slot 0.
+	active_slot = GameSettings.player_count - 1
+	_begin_turn()
+
+func _begin_turn() -> void:
+	if _living_count() <= 1:
+		_end_match()
+		return
+	var slot: int = _next_living_slot(active_slot)
+	if slot == -1:
+		_end_match()
+		return
+
+	active_slot = slot
+	_recompute_stack_top()
+
+	var piece: TowerPiece = PIECE_SCENE.instantiate()
+	pieces.add_child(piece) # before setup(): it reaches its @onready Sprite2D
+	piece.setup(next_index, CELL, active_slot, _slot_color(active_slot))
+	next_index = randi() % GameSettings.TETROMINOES.size()
+
+	aim_steps = 0
+	aim_x = 0.0
+	last_dir = 0
+	last_dir_timer = 0.0
+	dash_active = false
+	dash_ghost_timer = 0.0
+	wedge_timer = 0.0
+	hold_dir = 0
+	hold_timer = 0.0
+	piece.rotation = 0.0
+	piece.global_position = Vector2(aim_x, _spawn_y())
+	active_piece = piece
+
+	fallen_this_turn = 0
+	state = "piloting"
+	_refresh_hud()
+
+# The brick has touched something. It stops being steered and becomes an
+# ordinary rigid body exactly where it stopped — with no velocity, because
+# the descent was never real momentum. Everything dramatic from here on is
+# the solver's doing, not the player's.
+func _land() -> void:
+	if active_piece == null:
+		return
+	active_piece.release()
+	state = "settling"
+	settle_timer = 0.0
+	fall_timer = 0.0
+	_refresh_hud()
+
+func _resolve_turn() -> void:
+	_cull_fallen()
+	# Clear this *before* recomputing: the brick just placed is part of the
+	# stack now, and _recompute_stack_top() skips whatever active_piece
+	# points at (so the camera doesn't chase a brick on its way down).
+	active_piece = null
+	_recompute_stack_top()
+
+	bricks_placed += 1
+	best_height = max(best_height, int(round(-stack_top_y / CELL)))
+
+	if fallen_this_turn > 0:
+		lives[active_slot] = max(0, lives[active_slot] - 1)
+		var who: String = GameSettings.PLAYER_CONFIGS[active_slot]["name"]
+		var what: String = "BRICK" if fallen_this_turn == 1 else "%d BRICKS" % fallen_this_turn
+		if lives[active_slot] <= 0:
+			hud.show_message("%s DROPPED %s — OUT!" % [who, what], Color(1.0, 0.42, 0.36))
+		else:
+			hud.show_message("%s DROPPED %s   −1 LIFE" % [who, what], Color(1.0, 0.66, 0.30))
+
+	state = "resolving"
+	resolve_timer = RESOLVE_PAUSE
+	_refresh_hud()
+
+func _end_match() -> void:
+	state = "gameover"
+	if active_piece != null and active_piece.held:
+		pieces.remove_child(active_piece)
+		active_piece.queue_free()
+	active_piece = null
+
+	var winner: int = -1
+	for i in range(lives.size()):
+		if lives[i] > 0:
+			winner = i
+			break
+
+	overlay_title.text = "NOBODY WINS" if winner == -1 else "%s WINS" % GameSettings.PLAYER_CONFIGS[winner]["name"]
+	var lines: String = "Tower reached %d bricks high — %d placed\n\n" % [best_height, bricks_placed]
+	for i in range(lives.size()):
+		var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[i]
+		lines += "%s: %s\n" % [cfg["name"], "OUT" if lives[i] <= 0 else "%d lives left" % lives[i]]
+	overlay_body.text = lines.strip_edges()
+	overlay.visible = true
+	_refresh_hud()
+
+# --- Per-frame -------------------------------------------------------------
+
+# Camera, backdrop and HUD only. Everything that touches the physics world
+# lives in _physics_process, because the shape queries the piloting model is
+# built on are only valid there.
+func _process(delta: float) -> void:
+	cam_y = lerp(cam_y, _camera_target(), 1.0 - exp(-CAM_LERP * delta))
+	camera.position = Vector2(0.0, cam_y)
+	backdrop.set_scroll(maxf(0.0, (cam_start_y - cam_y) * BACKDROP_PARALLAX))
+	hud.tick(delta)
+	queue_redraw()
+
+func _physics_process(delta: float) -> void:
+	_recompute_stack_top()
+	last_dir_timer = maxf(0.0, last_dir_timer - delta)
+	if last_dir_timer <= 0.0:
+		last_dir = 0
+
+	match state:
+		"piloting":
+			_update_piloting(delta)
+		"settling":
+			_update_settling(delta)
+		"resolving":
+			_cull_fallen()
+			resolve_timer -= delta
+			if resolve_timer <= 0.0:
+				_begin_turn()
+		"gameover":
+			_cull_fallen()
+
+# Each axis is a separate request: move sideways if that space is free, turn
+# if that space is free, descend if that space is free. Only the last one
+# ends the turn — being unable to step sideways into the tower is an ordinary
+# thing that happens all the way down, and treating it as a landing would
+# drop bricks against walls they merely brushed.
+func _update_piloting(delta: float) -> void:
+	if active_piece == null:
+		return
+
+	_update_hold_repeat(delta)
+
+	var pos: Vector2 = active_piece.global_position
+	var rot: float = active_piece.rotation
+
+	var follow: float = DASH_FOLLOW_SPEED if dash_active else FOLLOW_SPEED
+	var step: float = clampf(aim_x - pos.x, -follow * delta, follow * delta)
+	if absf(step) > 0.001:
+		var want := Vector2(pos.x + step, pos.y)
+		if _blocked(Transform2D(rot, want)):
+			aim_x = pos.x # give up on the command rather than grinding against it
+			dash_active = false
+		else:
+			pos = want
+	if dash_active and absf(aim_x - pos.x) < 0.5:
+		dash_active = false
+	dash_ghost_timer = maxf(0.0, dash_ghost_timer - delta)
+
+	var target_rot: float = float(aim_steps) * PI * 0.5
+	if absf(angle_difference(rot, target_rot)) > 0.001:
+		var want_rot: float = lerp_angle(rot, target_rot, 1.0 - exp(-ROTATE_LERP * delta))
+		if not _blocked(Transform2D(want_rot, pos)):
+			rot = want_rot
+
+	var fall: float = SOFT_DROP_SPEED if _soft_drop_held() else DESCEND_SPEED
+	var want_down := Vector2(pos.x, pos.y + fall * delta)
+	var landed := false
+	if _blocked(Transform2D(rot, want_down)):
+		# Blocked is not the same as landed. If something is genuinely under
+		# the brick the turn is over; if it has merely come up against the
+		# side of a taller stack the player keeps steering, for as long as
+		# they like — WEDGE_GRACE is an anti-deadlock backstop, not a clock.
+		if _supported(Transform2D(rot, pos)):
+			landed = true
+		else:
+			wedge_timer += delta
+			if wedge_timer >= WEDGE_GRACE:
+				landed = true
+	else:
+		pos = want_down
+		wedge_timer = 0.0
+		# Steered clean past the edge of the platform: there is nothing below
+		# to land on, so it has missed everything. Without this the brick
+		# would descend forever and the turn would never end — the aim bound
+		# genuinely allows a brick to be walked entirely off the slab.
+		if pos.y > LOST_Y:
+			landed = true
+
+	active_piece.global_position = pos
+	active_piece.rotation = rot
+	if landed:
+		_land()
+	else:
+		_refresh_hud()
+
+# Holding a direction repeats the half-cell step, after a delay long enough
+# that a deliberate single tap never accidentally becomes two.
+func _update_hold_repeat(delta: float) -> void:
+	var dir: int = _aim_held()
+	if dir == 0 or dir != hold_dir:
+		hold_dir = dir
+		hold_timer = HOLD_REPEAT_DELAY
+		return
+	hold_timer -= delta
+	if hold_timer <= 0.0:
+		hold_timer = HOLD_REPEAT_INTERVAL
+		dash_active = false
+		_command_move(dir, STEP_CELLS)
+
+# Steps the *command*, not the brick's live position. Doing it this way is
+# what keeps the half-cell lattice exact: pressing again while the brick is
+# still travelling adds a clean half cell to where it was already going,
+# rather than half a cell from wherever it happens to have got to.
+func _command_move(dir: int, cells: float) -> void:
+	if active_piece == null:
+		return
+	var limit: float = maxf(
+		0.0,
+		PLATFORM_CELLS * CELL * 0.5 + AIM_BOUND_CELLS * CELL - active_piece.aim_half_width(aim_steps)
+	)
+	_command_to(aim_x + float(dir) * CELL * cells)
+
+func _command_to(x: float) -> void:
+	if active_piece == null:
+		return
+	var limit: float = maxf(
+		0.0,
+		PLATFORM_CELLS * CELL * 0.5 + AIM_BOUND_CELLS * CELL - active_piece.aim_half_width(aim_steps)
+	)
+	aim_x = clampf(x, -limit, limit)
+
+# The brick is out of the collision world while it is being flown (see
+# TowerPiece.set_held), so these ask the space directly rather than relying
+# on contacts. Only valid from _physics_process.
+func _query_hits(shape_list: Array[Shape2D], local: Array[Transform2D], xform: Transform2D) -> bool:
+	var space: PhysicsDirectSpaceState2D = get_world_2d().direct_space_state
+	var q := PhysicsShapeQueryParameters2D.new()
+	q.collision_mask = 1
+	q.collide_with_bodies = true
+	q.collide_with_areas = false
+	q.margin = 0.0
+	for i in range(shape_list.size()):
+		q.shape = shape_list[i]
+		q.transform = xform * local[i]
+		if not space.intersect_shape(q, 1).is_empty():
+			return true
+	return false
+
+# "Can the brick be here?" — used for every move, in all three axes.
+func _blocked(xform: Transform2D) -> bool:
+	if active_piece == null:
+		return false
+	return _query_hits(active_piece.body_shapes, active_piece.body_xforms, xform)
+
+# "Is anything holding the brick up?" — a different question, and the one
+# that decides whether a turn is over. A brick pressed against the flank of a
+# taller stack is blocked from descending but is not resting on anything, and
+# ending its turn there is what made it go limp in mid-air with a visible
+# void underneath. See TowerPiece.foot_shapes.
+func _supported(xform: Transform2D) -> bool:
+	if active_piece == null:
+		return false
+	var space: PhysicsDirectSpaceState2D = get_world_2d().direct_space_state
+	var q := PhysicsShapeQueryParameters2D.new()
+	q.collision_mask = 1
+	q.collide_with_bodies = true
+	q.collide_with_areas = false
+	q.margin = 0.0
+
+	# Built against the world axes, not the brick's. A foot stored in the
+	# brick's own frame rotates with it, so a brick turned a half turn probes
+	# upward and never finds the floor it is sitting on — which is exactly
+	# what happened, on every brick that was not upright.
+	var rot: float = xform.get_rotation()
+	var c: float = absf(cos(rot))
+	var sn: float = absf(sin(rot))
+	for i in range(active_piece.foot_shapes.size()):
+		var size_px: Vector2 = active_piece.boxes[i].size * active_piece.cell
+		var world_w: float = size_px.x * c + size_px.y * sn
+		var world_h: float = size_px.x * sn + size_px.y * c
+		var rect: RectangleShape2D = active_piece.foot_shapes[i]
+		rect.size = Vector2(maxf(4.0, world_w - TowerPiece.FOOT_INSET), TowerPiece.FOOT_DEPTH)
+		var centre: Vector2 = xform * active_piece.body_xforms[i].origin
+		q.shape = rect
+		q.transform = Transform2D(
+			0.0, centre + Vector2(0.0, world_h * 0.5 + TowerPiece.FOOT_DEPTH * 0.4)
+		)
+		if not space.intersect_shape(q, 1).is_empty():
+			return true
+	return false
+
+func _update_settling(delta: float) -> void:
+	fall_timer += delta
+	_cull_fallen()
+	if _everything_at_rest():
+		settle_timer += delta
+	else:
+		settle_timer = 0.0
+	if settle_timer >= SETTLE_HOLD or fall_timer >= SETTLE_TIMEOUT:
+		_resolve_turn()
+
+# Held bricks are skipped (they are frozen by definition) and sleeping bodies
+# are taken at their word — a body Godot has put to sleep is by definition
+# below its own rest thresholds, and re-testing its stale velocities would
+# keep a settled tower from ever counting as settled.
+func _everything_at_rest() -> bool:
+	for c in pieces.get_children():
+		var p := c as TowerPiece
+		# Doomed bricks are excluded: they are already scored, they are below
+		# the platform with nothing to hit, and whether they have finished
+		# falling has no bearing on whether the tower has stopped.
+		if p == null or p.held or p.doomed or p.sleeping:
+			continue
+		if p.linear_velocity.length() > SETTLE_LINEAR or absf(p.angular_velocity) > SETTLE_ANGULAR:
+			return false
+	return true
+
+func _cull_fallen() -> void:
+	for c in pieces.get_children():
+		var p := c as TowerPiece
+		if p == null or p.held:
+			continue
+		var pos: Vector2 = p.global_position
+		if not p.doomed and (pos.y > LOST_Y or absf(pos.x) > LOST_X):
+			p.doomed = true
+			if p == active_piece:
+				active_piece = null
+			fallen_this_turn += 1
+		if pos.y > DESPAWN_Y or absf(pos.x) > DESPAWN_X:
+			pieces.remove_child(p)
+			p.queue_free()
+
+func _recompute_stack_top() -> void:
+	var top := 0.0
+	for c in pieces.get_children():
+		var p := c as TowerPiece
+		if p == null or p.held or p.doomed or p == active_piece:
+			continue
+		top = minf(top, p.top_y())
+	stack_top_y = top
+
+func _spawn_y() -> float:
+	return stack_top_y - SPAWN_CLEARANCE
+
+func _camera_target() -> float:
+	var view_h: float = get_viewport().get_visible_rect().size.y
+	var resting: float = -(CAM_GROUND_FRAC - 0.5) * view_h
+	var climbing: float = stack_top_y - (CAM_STACK_TOP_FRAC - 0.5) * view_h
+	# minf, not maxf: -y is up, so the smaller value is the higher camera, and
+	# the climbing shot only wins once it actually needs to.
+	return minf(resting, climbing)
+
+# --- Players ---------------------------------------------------------------
+
+func _living_count() -> int:
+	var n := 0
+	for l in lives:
+		if l > 0:
+			n += 1
+	return n
+
+func _next_living_slot(from: int) -> int:
+	var count: int = lives.size()
+	for step in range(1, count + 1):
+		var s: int = (from + step) % count
+		if lives[s] > 0:
+			return s
+	return -1
+
+func _slot_color(slot: int) -> Color:
+	if slot < GameSettings.skin_colors.size():
+		return GameSettings.skin_colors[slot]
+	return Color(0.8, 0.8, 0.85)
+
+# --- Input -----------------------------------------------------------------
+
+# Piloting reads the held keys straight, the same way PlayerBoard's steering
+# does. Unlike PlayerBoard there is no bot to keep compatible here, so the
+# §7 "everything goes through _steer_held()" rule doesn't apply — but this is
+# still funnelled through these functions so a future tower bot has a single
+# place to plug into. Both keys down reads as neutral with no tiebreak: this
+# is stepped positioning, not momentum steering, so PlayerBoard's
+# steer_priority problem doesn't arise.
+func _aim_held() -> int:
+	var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[active_slot]
+	var l: bool = Input.is_physical_key_pressed(cfg["left"])
+	var r: bool = Input.is_physical_key_pressed(cfg["right"])
+	if l == r:
+		return 0
+	return -1 if l else 1
+
+func _soft_drop_held() -> bool:
+	return Input.is_physical_key_pressed(GameSettings.PLAYER_CONFIGS[active_slot]["down"])
+
+# A press is always half a cell now. The dash is a separate button.
+func _press_steer(dir: int) -> void:
+	if active_piece == null:
+		return
+	_command_move(dir, STEP_CELLS)
+	last_dir = dir
+	last_dir_timer = DASH_DIR_GRACE
+	hold_dir = dir
+	hold_timer = HOLD_REPEAT_DELAY
+
+# One whole cell, in the direction being held — or, if none is, the last one
+# pressed a moment ago, so both "hold right and dash" and "tap right, dash"
+# do the same thing. With nothing to go on it does nothing rather than
+# guessing a direction.
+func _press_dash() -> void:
+	if active_piece == null:
+		return
+	var dir: int = _aim_held()
+	if dir == 0 and last_dir_timer > 0.0:
+		dir = last_dir
+	if dir == 0:
+		return
+	dash_ghost_x = active_piece.global_position.x
+	dash_ghost_timer = DASH_GHOST_TIME
+	dash_active = true
+	_command_move(dir, DASH_CELLS)
+	last_dir = dir
+	last_dir_timer = DASH_DIR_GRACE
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	var key: int = event.keycode
+
+	if key == KEY_ESCAPE:
+		get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+		return
+	if state == "gameover":
+		if key == KEY_ENTER:
+			_start_match()
+		return
+	if state != "piloting" or active_piece == null:
+		return
+
+	# Rotation reuses the two skill-choice buttons rather than the confirm
+	# key: they are the only bindings every player already has that aren't
+	# needed for moving or dropping, and they flank confirm on the keyboard
+	# so "left of drop / right of drop" turns left / right.
+	var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[active_slot]
+	if key == cfg["skill_self"]:
+		aim_steps += 1
+	elif key == cfg["skill_opponent"]:
+		aim_steps -= 1
+	elif key == cfg["confirm"]:
+		_press_dash()
+	elif key == cfg["left"]:
+		_press_steer(-1)
+	elif key == cfg["right"]:
+		_press_steer(1)
+
+# --- HUD -------------------------------------------------------------------
+
+func _refresh_hud() -> void:
+	var slots: Array[Dictionary] = []
+	for i in range(lives.size()):
+		var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[i]
+		slots.append({
+			"name": cfg["name"],
+			"color": _slot_color(i),
+			"lives": lives[i],
+		})
+	hud.slots = slots
+	hud.max_lives = START_LIVES
+	hud.active_slot = active_slot
+	hud.waiting = (state != "piloting")
+	hud.next_index = next_index
+	hud.controls = _controls_text()
+	hud.queue_redraw()
+
+func _controls_text() -> String:
+	if state != "piloting":
+		return ""
+	# One action per line — TowerHUD splits on newlines because the side
+	# column is too narrow for the single-line form.
+	var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[active_slot]
+	return "%s   half a block\n%s   dash a whole block\n%s / %s   rotate\n%s   fall faster" % [
+		cfg["steer_label"],
+		cfg["confirm_label"],
+		OS.get_keycode_string(cfg["skill_opponent"]),
+		OS.get_keycode_string(cfg["skill_self"]),
+		OS.get_keycode_string(cfg["down"]),
+	]
+
+# --- Foreground ------------------------------------------------------------
+
+func _draw() -> void:
+	var view: Vector2 = get_viewport().get_visible_rect().size
+	var top: float = cam_y - view.y * 0.5
+	var bottom: float = cam_y + view.y * 0.5
+	var half_w: float = PLATFORM_CELLS * CELL * 0.5
+
+	_draw_play_column(top, half_w)
+	_draw_height_guides(top, bottom, half_w)
+	_draw_outcrop(half_w)
+	_draw_drop_guide(half_w)
+	_draw_dash_ghost()
+
+func _draw_play_column(top: float, half_w: float) -> void:
+	var reach: float = half_w + AIM_BOUND_CELLS * CELL
+	draw_rect(Rect2(-reach, top, reach * 2.0, -top), COLUMN_SHADE, true)
+
+# The backdrop's parallax carries most of the sense of climbing, but it moves
+# at a fraction of the camera, so these are what actually tick past at the
+# tower's own rate. Every fourth cell, so they read as courses of brickwork
+# rather than as a grid the bricks are supposed to snap to — the bricks move
+# on a half-cell lattice on the way down but land wherever physics puts them.
+func _draw_height_guides(top: float, bottom: float, half_w: float) -> void:
+	var spacing: float = GUIDE_SPACING_CELLS * CELL
+	var reach: float = half_w + AIM_BOUND_CELLS * CELL + CELL
+	var y: float = -spacing
+	while y > top:
+		y -= spacing
+	while y < minf(bottom, 0.0):
+		draw_line(Vector2(-reach, y), Vector2(reach, y), GUIDE_COLOR, 2.0)
+		y += spacing
+
+	# The platform's own footprint, carried upward: the line you are trying
+	# to keep the tower inside, and the only reference left once the platform
+	# itself has scrolled off the bottom.
+	for side: float in [-1.0, 1.0]:
+		var x: float = side * half_w
+		draw_line(Vector2(x, 0.0), Vector2(x, top), EDGE_LINE_COLOR, 2.0)
+
+# The tower stands on a rock outcrop growing out of the ground, not on a
+# platform on legs. Same silhouette language as the cliffs in the backdrop: a
+# grass-capped top, a body that flares as it descends, and a base buried in
+# the grass shelf TowerGround draws over it.
+func _draw_outcrop(half_w: float) -> void:
+	var art: Texture2D = TowerGround.ART
+	var base_w: float = half_w + OUTCROP_FLARE
+	var foot: float = GROUND_Y + OUTCROP_BURY
+
+	# Body, as horizontal slices: a texture can only be drawn into a rect, so
+	# the taper is made by narrowing each slice rather than by one polygon.
+	# The source scrolls through its own band and wraps, which tiles the
+	# stone vertically at its native scale instead of stretching one copy
+	# over the whole height and smearing it.
+	var y: float = 0.0
+	while y < foot:
+		var h: float = minf(ROCK_SLICE, foot - y)
+		var w: float = lerp(half_w, base_w, y / foot)
+		var src_y: float = ROCK_SRC.position.y + fmod(y, ROCK_SRC.size.y - h)
+		draw_texture_rect_region(
+			art,
+			Rect2(-w, y, w * 2.0, h),
+			Rect2(ROCK_SRC.position.x, src_y, ROCK_SRC.size.x, h)
+		)
+		y += h
+
+	# Form: one lit face and one shadowed face over the texture, so the rock
+	# has a direction rather than reading as a flat wall of rubble.
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(-half_w, 0.0), Vector2(-half_w * 0.42, 0.0),
+		Vector2(-base_w * 0.42, foot), Vector2(-base_w, foot),
+	]), ROCK_SHADE_LEFT)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(half_w * 0.36, 0.0), Vector2(half_w, 0.0),
+		Vector2(base_w, foot), Vector2(base_w * 0.36, foot),
+	]), ROCK_SHADE_RIGHT)
+
+	# Grass cap. Entirely at y >= 0, and the bricks rest at y <= 0 and are
+	# drawn after this, so the cap can never poke through the bottom brick.
+	var cap_w: float = half_w + 5.0
+	draw_rect(Rect2(-cap_w, 0.0, cap_w * 2.0, 13.0), GRASS, true)
+	draw_rect(Rect2(-cap_w, 0.0, cap_w * 2.0, 4.0), GRASS_LIGHT, true)
+	draw_rect(Rect2(-cap_w, 13.0, cap_w * 2.0, 3.0), GRASS_DARK, true)
+	# Tufts hanging over the lip, so the cap doesn't end on a ruled line.
+	for t: float in [-0.82, -0.44, 0.1, 0.52, 0.88]:
+		var tx: float = t * half_w
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(tx - 7.0, 12.0), Vector2(tx + 7.0, 12.0), Vector2(tx, 25.0),
+		]), GRASS_DARK)
+
+# The afterimage a dash leaves behind it — the same trick Don't Crash's lane
+# dash uses, and here it is doing more than decoration. A dash covers one
+# cell in about 27ms, which is over almost before it registers; the trail is
+# most of what tells the player the gesture landed at all, as opposed to
+# having been read as two ordinary taps.
+func _draw_dash_ghost() -> void:
+	if dash_ghost_timer <= 0.0 or active_piece == null:
+		return
+	var fade: float = dash_ghost_timer / DASH_GHOST_TIME
+	var c: Color = active_piece.owner_color
+	var here: Vector2 = active_piece.global_position
+	var rot: float = active_piece.rotation
+	var travelled: float = dash_ghost_x - here.x
+	if absf(travelled) < 1.0:
+		return
+
+	# Everything here draws *behind* the brick: TowerMode paints before its
+	# own children, and PiecesContainer is a child. That is what makes the
+	# rim flash work — only the half of the stroke that falls outside the
+	# brick's silhouette is visible, so it reads as an edge light rather than
+	# as a box drawn on top of the art.
+	var half_h: float = active_piece.aim_half_width(aim_steps + 1)
+
+	# Speed lines, trailing back along the path the brick came down.
+	for i in range(DASH_STREAKS):
+		var fy: float = (float(i) / float(DASH_STREAKS - 1) - 0.5) * 1.4 * half_h
+		var t0: float = 0.15 + 0.2 * float(i % 2)
+		var x0: float = here.x + travelled * t0
+		var x1: float = here.x + travelled * (t0 + 0.45)
+		draw_line(
+			Vector2(x0, here.y + fy), Vector2(x1, here.y + fy),
+			Color(c.r, c.g, c.b, fade * 0.5), 2.0
+		)
+
+	# Afterimages, brightest nearest the brick so the trail reads as
+	# direction rather than as a smear.
+	for i in range(DASH_GHOST_COPIES):
+		var t: float = float(i + 1) / float(DASH_GHOST_COPIES + 1)
+		var at := Vector2(lerp(here.x, dash_ghost_x, t), here.y)
+		var a: float = fade * (1.0 - t) * 0.7
+		for pts: PackedVector2Array in active_piece.box_outlines(Transform2D(rot, at)):
+			draw_polyline(pts, Color(c.r, c.g, c.b, a), 2.0)
+
+	# Rim flash where it landed.
+	for pts: PackedVector2Array in active_piece.box_outlines(Transform2D(rot, here)):
+		draw_polyline(pts, Color(1.0, 1.0, 1.0, fade * 0.8), DASH_RIM_WIDTH)
+
+# A translucent column under the descending brick, down to whatever it would
+# land on. Judging a drop on a leaning tower from the brick alone is
+# guesswork; this makes the line of the shot readable without snapping
+# anything.
+func _draw_drop_guide(half_w: float) -> void:
+	if state != "piloting" or active_piece == null:
+		return
+	var w: float = active_piece.aim_half_width(aim_steps) * 2.0
+	var x: float = active_piece.global_position.x
+	var y0: float = active_piece.global_position.y
+	var c: Color = active_piece.owner_color
+	draw_rect(Rect2(x - w * 0.5, y0, w, -y0), Color(c.r, c.g, c.b, DROP_GUIDE_ALPHA), true)
+	draw_line(
+		Vector2(x - w * 0.5, stack_top_y), Vector2(x + w * 0.5, stack_top_y),
+		Color(c.r, c.g, c.b, 0.65), 2.0
+	)
+	for side: float in [-1.0, 1.0]:
+		draw_line(
+			Vector2(side * half_w, stack_top_y - CELL * 0.4), Vector2(side * half_w, 0.0),
+			EDGE_LINE_COLOR, 2.0
+		)

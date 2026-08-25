@@ -11,8 +11,15 @@ var panel_refs: Array[Dictionary] = []
 # again — which with bot slots (which are ready the instant they are toggled)
 # is far easier to hit than it used to be.
 var starting: bool = false
+# Pile Up has no BotDriver equivalent, so this screen drops the bot hotkeys
+# and hints there rather than offering a toggle that would do nothing. It is
+# still in the flow for both modes because both need a colour per player —
+# in the tower it identifies whose brick is in the air and whose lives are
+# whose, since every brick already on the pile looks the same.
+var race: bool = true
 
 func _ready() -> void:
+	race = GameSettings.mode == GameSettings.MODE_RACE
 	var count: int = GameSettings.player_count
 	indices.resize(count)
 	ready_flags.resize(count)
@@ -74,7 +81,7 @@ func _cycle(current: int, taken: Array[int], delta: int) -> int:
 # switched on, keeping whatever colour it was already showing. That is what
 # makes the single-player path (and an all-bot round) start on its own.
 func _is_ready(slot: int) -> bool:
-	return GameSettings.bot_flags[slot] or ready_flags[slot]
+	return (race and GameSettings.bot_flags[slot]) or ready_flags[slot]
 
 func _refresh() -> void:
 	var all_ready := true
@@ -84,7 +91,7 @@ func _refresh() -> void:
 		ref["swatch"].texture = skin["texture"]
 		ref["name_label"].text = skin["name"]
 		var cfg: Dictionary = ref["cfg"]
-		if GameSettings.bot_flags[i]:
+		if race and GameSettings.bot_flags[i]:
 			ref["status_label"].text = "BOT (%s)\n%s to take back" % [
 				BotDriver.DIFFICULTY_NAMES[GameSettings.bot_difficulty],
 				OS.get_keycode_string(GameSettings.BOT_TOGGLE_KEYS[i]),
@@ -94,7 +101,12 @@ func _refresh() -> void:
 		else:
 			ref["status_label"].text = "%s to change, %s to lock in" % [cfg["steer_label"], cfg["confirm_label"]]
 			all_ready = false
-	hint.text = "Starting..." if all_ready else "Choose your car color      1-4: bot      5: difficulty"
+	if all_ready:
+		hint.text = "Starting..."
+	elif race:
+		hint.text = "Choose your car color      1-4: bot      5: difficulty"
+	else:
+		hint.text = "Choose your color — it marks your brick and your lives"
 
 	if all_ready and not starting:
 		starting = true
@@ -106,7 +118,9 @@ func _refresh() -> void:
 		GameSettings.skins = chosen
 		GameSettings.skin_colors = chosen_colors
 		await get_tree().create_timer(0.4).timeout
-		get_tree().change_scene_to_file("res://scenes/Main.tscn")
+		get_tree().change_scene_to_file(
+			"res://scenes/Main.tscn" if race else "res://scenes/TowerMode.tscn"
+		)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
@@ -119,12 +133,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	# Same 1-4 / 5 hotkeys as mid-round (see GameSettings.BOT_TOGGLE_KEYS),
 	# so "make P2 a bot" is one key in the same place whether you decide it
 	# here or twenty seconds into the race.
-	var slot: int = GameSettings.BOT_TOGGLE_KEYS.find(key)
+	var slot: int = GameSettings.BOT_TOGGLE_KEYS.find(key) if race else -1
 	if slot != -1 and slot < panel_refs.size():
 		GameSettings.set_bot(slot, not GameSettings.bot_flags[slot])
 		_refresh()
 		return
-	if key == GameSettings.BOT_DIFFICULTY_KEY:
+	if race and key == GameSettings.BOT_DIFFICULTY_KEY:
 		GameSettings.bot_difficulty = BotDriver.next_difficulty(GameSettings.bot_difficulty)
 		_refresh()
 		return

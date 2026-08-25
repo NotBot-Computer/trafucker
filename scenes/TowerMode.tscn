@@ -1,0 +1,70 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/TowerMode.gd" id="1_tower"]
+[ext_resource type="Script" path="res://scripts/TowerHUD.gd" id="2_tower_hud"]
+[ext_resource type="Script" path="res://scripts/TowerBackground.gd" id="3_tower_bg"]
+[ext_resource type="Script" path="res://scripts/TowerGround.gd" id="4_tower_ground"]
+
+[node name="TowerMode" type="Node2D"]
+script = ExtResource("1_tower")
+
+[node name="Backdrop" type="CanvasLayer" parent="."]
+layer = -1
+
+[node name="Sky" type="Control" parent="Backdrop"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("3_tower_bg")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+
+[node name="Platform" type="StaticBody2D" parent="."]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Platform"]
+
+[node name="PiecesContainer" type="Node2D" parent="."]
+
+[node name="Foreground" type="Node2D" parent="."]
+
+[node name="Ground" type="Node2D" parent="Foreground"]
+script = ExtResource("4_tower_ground")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="Board" type="Control" parent="HUD"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("2_tower_hud")
+
+[node name="Overlay" type="Control" parent="HUD"]
+visible = false
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="Dim" type="ColorRect" parent="HUD/Overlay"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.05, 0.05, 0.1, 0.78)
+
+[node name="OverlayTitle" type="Label" parent="HUD/Overlay"]
+anchor_right = 1.0
+offset_top = 250.0
+offset_bottom = 290.0
+theme_override_font_sizes/font_size = 32
+horizontal_alignment = 1
+text = ""
+
+[node name="OverlayBody" type="Label" parent="HUD/Overlay"]
+anchor_right = 1.0
+offset_top = 305.0
+offset_bottom = 460.0
+theme_override_font_sizes/font_size = 18
+horizontal_alignment = 1
+text = ""
+
+[node name="OverlayHint" type="Label" parent="HUD/Overlay"]
+anchor_right = 1.0
+offset_top = 480.0
+offset_bottom = 510.0
+horizontal_alignment = 1
+text = "ENTER to play again      ESC for the menu"

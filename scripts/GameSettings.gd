@@ -1,5 +1,14 @@
 extends Node
 
+# Which mode the menu flow is heading into. A plain int rather than an enum
+# for the same reason bot_difficulty is one: this autoload loads before every
+# gameplay script, so it must not name a type that lives in one. MainMenu
+# sets it, PlayerSelect and SkinSelect route on it, and it decides which
+# scene SkinSelect finally hands off to.
+const MODE_RACE := 0  # Don't Crash — the split-screen dodge-traffic race
+const MODE_TOWER := 1 # Pile Up — the shared-tower physics stacker
+var mode: int = MODE_RACE
+
 var player_count: int = 2
 
 # Which player slots start a round driven by BotDriver instead of a keyboard.
@@ -216,6 +225,12 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 
 # One steering + confirm binding per player slot. Keeps 4 players on a single
 # keyboard: three WASD-shaped clusters (A/D+W, F/H+T, J/L+I) plus arrows.
+#
+# `down` is Pile Up's soft drop — hold it and the descending brick falls
+# faster. Each one is the key physically below that player's confirm key and
+# between their two steering keys (A-S-D, F-G-H, J-K-L, and the arrow
+# cluster's own Down), so "down" means down on the keyboard as well as in
+# the game. Don't Crash does not read it.
 # skill_opponent/skill_self are the two skill-choice-pickup buttons (see
 # PlayerBoard.gd) — deliberately separate keys from steering, not reused
 # left/right, since a skill choice never pauses driving. This project targets
@@ -225,8 +240,65 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 # player's own confirm key on the keyboard (Q/W/E, ,/Up/., R/T/Y, U/I/O) only
 # as a mnemonic, not because that positioning matters long-term.
 const PLAYER_CONFIGS: Array[Dictionary] = [
-	{"name": "P1", "left": KEY_A, "right": KEY_D, "confirm": KEY_W, "skill_opponent": KEY_Q, "skill_self": KEY_E, "steer_label": "A / D", "confirm_label": "W"},
-	{"name": "P2", "left": KEY_LEFT, "right": KEY_RIGHT, "confirm": KEY_UP, "skill_opponent": KEY_COMMA, "skill_self": KEY_PERIOD, "steer_label": "Left / Right", "confirm_label": "Up"},
-	{"name": "P3", "left": KEY_F, "right": KEY_H, "confirm": KEY_T, "skill_opponent": KEY_R, "skill_self": KEY_Y, "steer_label": "F / H", "confirm_label": "T"},
-	{"name": "P4", "left": KEY_J, "right": KEY_L, "confirm": KEY_I, "skill_opponent": KEY_U, "skill_self": KEY_O, "steer_label": "J / L", "confirm_label": "I"},
+	{"name": "P1", "left": KEY_A, "right": KEY_D, "down": KEY_S, "confirm": KEY_W, "skill_opponent": KEY_Q, "skill_self": KEY_E, "steer_label": "A / D", "confirm_label": "W"},
+	{"name": "P2", "left": KEY_LEFT, "right": KEY_RIGHT, "down": KEY_DOWN, "confirm": KEY_UP, "skill_opponent": KEY_COMMA, "skill_self": KEY_PERIOD, "steer_label": "Left / Right", "confirm_label": "Up"},
+	{"name": "P3", "left": KEY_F, "right": KEY_H, "down": KEY_G, "confirm": KEY_T, "skill_opponent": KEY_R, "skill_self": KEY_Y, "steer_label": "F / H", "confirm_label": "T"},
+	{"name": "P4", "left": KEY_J, "right": KEY_L, "down": KEY_K, "confirm": KEY_I, "skill_opponent": KEY_U, "skill_self": KEY_O, "steer_label": "J / L", "confirm_label": "I"},
+]
+
+
+# --- Pile Up (MODE_TOWER) --------------------------------------------------
+
+# The seven car-tetromino bricks, extracted from the user's bloklar.png by
+# scripts/dev/extract_blocks.py. Every sprite is normalised there to an exact
+# `cols x rows` grid of square cells, so one scale factor (cell / 100) fits
+# any of them and nothing here needs a per-piece fudge.
+#
+# `boxes` is the piece's collision, in cell units measured from the top-left
+# of its own bounding box. It is deliberately *merged rectangles* rather than
+# one box per cell: a stack of four separate unit boxes presents internal
+# edges that a neighbouring brick's corner can catch on, which reads as a
+# tower snagging on nothing. Every tetromino decomposes into one or two
+# rectangles, so the merged form costs nothing and is strictly more stable.
+#
+# `color` is a flat approximation of each sprite's body hue, for the UI bits
+# that need a plain Color rather than the texture (the next-piece card, the
+# landing flash) — same role, and same caveat about not updating itself, as
+# PLAYER_SKINS' own "color" entry.
+const TETROMINOES: Array[Dictionary] = [
+	{
+		"name": "I", "cols": 4, "rows": 1, "color": Color(0.30, 0.66, 0.80),
+		"texture": preload("res://sprites/blocks/piece_i.png"),
+		"boxes": [Rect2(0, 0, 4, 1)],
+	},
+	{
+		"name": "O", "cols": 2, "rows": 2, "color": Color(0.96, 0.79, 0.15),
+		"texture": preload("res://sprites/blocks/piece_o.png"),
+		"boxes": [Rect2(0, 0, 2, 2)],
+	},
+	{
+		"name": "T", "cols": 3, "rows": 2, "color": Color(0.62, 0.40, 0.80),
+		"texture": preload("res://sprites/blocks/piece_t.png"),
+		"boxes": [Rect2(0, 0, 3, 1), Rect2(1, 1, 1, 1)],
+	},
+	{
+		"name": "S", "cols": 3, "rows": 2, "color": Color(0.47, 0.72, 0.27),
+		"texture": preload("res://sprites/blocks/piece_s.png"),
+		"boxes": [Rect2(1, 0, 2, 1), Rect2(0, 1, 2, 1)],
+	},
+	{
+		"name": "Z", "cols": 3, "rows": 2, "color": Color(0.85, 0.24, 0.21),
+		"texture": preload("res://sprites/blocks/piece_z.png"),
+		"boxes": [Rect2(0, 0, 2, 1), Rect2(1, 1, 2, 1)],
+	},
+	{
+		"name": "L", "cols": 2, "rows": 3, "color": Color(0.94, 0.55, 0.14),
+		"texture": preload("res://sprites/blocks/piece_l.png"),
+		"boxes": [Rect2(0, 0, 1, 3), Rect2(1, 2, 1, 1)],
+	},
+	{
+		"name": "J", "cols": 3, "rows": 2, "color": Color(0.20, 0.35, 0.75),
+		"texture": preload("res://sprites/blocks/piece_j.png"),
+		"boxes": [Rect2(2, 0, 1, 1), Rect2(0, 1, 3, 1)],
+	},
 ]
