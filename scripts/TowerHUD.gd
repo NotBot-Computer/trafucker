@@ -57,6 +57,13 @@ var slots: Array[Dictionary] = [] # {name: String, color: Color, lives: int}
 var max_lives: int = 3
 var active_slot: int = 0
 var waiting: bool = false # true between the drop and the next turn, when nobody is on the clock
+# Who the baton is passing to, set alongside `waiting`. The banner used to
+# read "settling..." through the whole hand-off, which is a word the player
+# cannot act on and which made every gap between turns read as the game
+# stopping. Naming the next player instead turns the same gap into a hand-off
+# they can see coming — the tower resolving is already visible on screen and
+# does not need captioning.
+var next_slot: int = 0
 var next_index: int = 0
 var controls: String = ""
 
@@ -173,7 +180,12 @@ func _draw_turn_banner(font: Font) -> void:
 	var y: float = CARDS_Y + float(slots.size()) * (CARD_H + CARD_GAP) + 20.0
 	draw_rect(Rect2(COL_MARGIN, y - 24.0, COL_W, 36.0), PANEL_BG, true)
 	if waiting:
-		draw_string(font, Vector2(COL_MARGIN + PANEL_PAD, y), "settling...", HORIZONTAL_ALIGNMENT_LEFT, COL_W, 18, DIM_TEXT)
+		var up: Dictionary = slots[clampi(next_slot, 0, slots.size() - 1)]
+		draw_string(
+			font, Vector2(COL_MARGIN + PANEL_PAD, y), "%s — GET READY" % up["name"],
+			HORIZONTAL_ALIGNMENT_LEFT, COL_W, 18,
+			Color(up["color"].r, up["color"].g, up["color"].b, 0.75)
+		)
 		return
 	var slot: Dictionary = slots[active_slot]
 	draw_string(

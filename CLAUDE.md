@@ -41,6 +41,11 @@ And one for Pile Up's *descent*, which asks whether a brick ever stops falling p
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/StallProbe.tscn
 ```
 
+And one for Pile Up's *pace*, which splits a turn into the descent, the settle and the pause before the next brick — the three things "the hand-off takes too long" can actually mean (docs/PROJECT_STATE.md §5 session T):
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/PaceProbe.tscn
+```
+
 For measuring bot behaviour rather than looking at it, `--fixed-fps` disables real-time sync and runs the simulation as fast as the machine allows, so a 60-second round takes a few seconds of wall clock:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 120 res://scenes/Main.tscn

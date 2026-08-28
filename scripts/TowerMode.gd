@@ -90,10 +90,23 @@ const OUTCROP_BURY := 40.0 # how far it continues below the ground line, so it n
 # width so a long piece cannot be walked further out than a short one.
 #
 # Note this bound keeps the half-cell lattice exact rather than truncating
-# it: the limit works out to (2.5 + 2.0 - half the brick's width in cells)
-# cells, and a brick's half-width is always a whole number of half cells, so
-# clamping lands on the lattice instead of somewhere between two steps.
-const AIM_BOUND_CELLS := 2.0
+# it: the limit works out to (2.5 + AIM_BOUND_CELLS - half the brick's width
+# in cells) cells, and a brick's half-width is always a whole number of half
+# cells, so as long as this constant stays a multiple of 0.5, clamping lands
+# on the lattice instead of somewhere between two steps. It is not free to be
+# any number.
+#
+# 2.0 → 2.5 on request, for a little more room to the sides. It widens the
+# shaded play column and the height guides with it, since both are drawn from
+# this constant, and it does not touch PLATFORM_CELLS — the platform is the
+# same size, there is just more air either side of it that a brick may be
+# steered over. Measured cost with TowerProbe, which aims as a fraction of
+# the legal range and so models a player using all of the new room: matches
+# shorten from 23.3 to 20.8 turns at spread 0.3 and 19.7 to 18.3 at 1.0.
+# That is the difficulty this knob is documented to buy (§9) — more ways to
+# put a brick somewhere it cannot be saved — and a real player only spends
+# the extra reach when they want it, so it is an upper bound on the cost.
+const AIM_BOUND_CELLS := 2.5
 
 # Sideways movement is stepped, not slid. A press is half a cell; holding a
 # direction repeats that step after a delay, so long travel doesn't mean
@@ -139,14 +152,33 @@ const DASH_RIM_WIDTH := 7.0 # outline flash at the landing position; only its ou
 
 const ROTATE_LERP := 18.0
 
-# Spawn height above the stack, squeezed from both ends. The floor is the
-# tallest half-extent any brick can have (a vertical I piece reaches 2 cells
-# below its own centre); the ceiling is the top of the screen, since the
-# camera holds the stack top at CAM_STACK_TOP_FRAC and the brick appears a
-# fixed distance above that. 7 cells puts a vertical I piece's top edge at
-# roughly y=42 on screen, and gives about 4.5 seconds of descent to steer in.
+# Spawn height above the stack, and the speed it comes down at. They look
+# like the same knob and they are not — this is the mistake that got made
+# here, so it is written down.
+#
+# The turn was too slow: measured (PaceProbe), a 7.7s turn spent 3.8s on the
+# descent, 2.5s of that with the brick still more than two cells above
+# everything, against 2.6s settling and a 1.2s pause. Both numbers were cut
+# to fix it — 7 cells to 5.5, and 58px/s to 105 — on the reasoning that they
+# are the same second approached from two directions.
+#
+# They are not. **Speed is the pace knob; height is a readability one.** The
+# distance above the stack is how much of the fall the player can see coming
+# and plan against — where the brick is relative to the tower, whether the
+# rotation is right, how far across it still has to travel — and shortening
+# it does not make the turn feel quicker, it makes the brick feel like it
+# appears already half-way down. Reported immediately from play as bricks
+# starting too low, so the height went back to 7 cells and the speed stayed.
+# The descent still costs about 2.2s against the original 3.8s, and all of
+# that saving came from the half of the change that was actually about time.
+#
+# The floor on the height is the tallest half-extent any brick can have (a
+# vertical I piece reaches 2 cells below its own centre); the ceiling is the
+# top of the screen, since the camera holds the stack top at
+# CAM_STACK_TOP_FRAC and the brick appears a fixed distance above that. 7
+# cells puts a vertical I piece's top edge at roughly y=42 on screen.
 const SPAWN_CLEARANCE := CELL * 7.0
-const DESCEND_SPEED := 58.0 # px/s, ~1.5 cells/s
+const DESCEND_SPEED := 105.0 # px/s, ~2.8 cells/s
 const SOFT_DROP_SPEED := 430.0 # px/s while `down` is held
 
 # Contact tolerance for the three move queries. A move is refused only if it
@@ -194,16 +226,33 @@ const WEDGE_GRACE := 6.0
 
 # --- Turn structure --------------------------------------------------------
 const START_LIVES := 3
-const RESOLVE_PAUSE := 1.2 # beat between "everything stopped" and the next brick, so the result reads
+
+# The beat between "everything stopped" and the next brick, and there are two
+# of them because there are two kinds of turn. A turn that cost somebody a
+# life puts a message on screen and that message has to be readable, so it
+# keeps its pause. A turn where nothing fell has nothing to say and nothing
+# to read, and holding the game still for over a second to say it is exactly
+# the dead air that got reported — most turns are this kind.
+const RESOLVE_PAUSE_QUIET := 0.35
+const RESOLVE_PAUSE_EVENT := 1.1
 
 # A turn ends when the whole world is at rest, not when the brick lands: the
 # interesting case is a brick that lands cleanly and then shoves the tower
 # over three seconds later, and resolving on contact would score that against
 # the wrong player. SETTLE_TIMEOUT is the backstop for a tower that has found
 # some slow perpetual wobble it will not come out of.
+#
+# SETTLE_LINEAR and SETTLE_ANGULAR are the fault rule's guard and are
+# deliberately not the pace knob: measured, the tower is genuinely still
+# moving for most of the settle (72% of settling frames fail the linear test,
+# with tumbles up to 5.3 rad/s), so loosening these would resolve turns on
+# towers that are still falling and bill the collapse to the next player.
+# SETTLE_HOLD is a different thing — it is the quiet period required *after*
+# the motion has already stopped, and half a second of it was pure padding on
+# top of a test the tower passes within 0.36s of a landing.
 const SETTLE_LINEAR := 16.0
 const SETTLE_ANGULAR := 0.18
-const SETTLE_HOLD := 0.5
+const SETTLE_HOLD := 0.25
 const SETTLE_TIMEOUT := 9.0
 
 # Losing a brick and removing a brick are two different moments, and
@@ -449,7 +498,7 @@ func _resolve_turn() -> void:
 			hud.show_message("%s DROPPED %s   −1 LIFE" % [who, what], Color(1.0, 0.66, 0.30))
 
 	state = "resolving"
-	resolve_timer = RESOLVE_PAUSE
+	resolve_timer = RESOLVE_PAUSE_EVENT if fallen_this_turn > 0 else RESOLVE_PAUSE_QUIET
 	_refresh_hud()
 
 func _end_match() -> void:
@@ -870,6 +919,11 @@ func _refresh_hud() -> void:
 	hud.max_lives = START_LIVES
 	hud.active_slot = active_slot
 	hud.waiting = (state != "piloting")
+	# Whose brick is next, so the banner can name them through the hand-off
+	# instead of captioning the wait. -1 (no one left) falls back to the
+	# current slot; the match is ending anyway on that frame.
+	var up: int = _next_living_slot(active_slot)
+	hud.next_slot = up if up >= 0 else active_slot
 	hud.next_index = next_index
 	hud.controls = _controls_text()
 	hud.queue_redraw()
