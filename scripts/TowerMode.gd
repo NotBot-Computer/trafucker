@@ -148,6 +148,35 @@ const ROTATE_LERP := 18.0
 const SPAWN_CLEARANCE := CELL * 7.0
 const DESCEND_SPEED := 58.0 # px/s, ~1.5 cells/s
 const SOFT_DROP_SPEED := 430.0 # px/s while `down` is held
+
+# Contact tolerance for the three move queries. A move is refused only if it
+# would put the brick *meaningfully* inside something, never for merely
+# grazing it.
+#
+# This exists because of the lattice. Every command is a multiple of half a
+# cell from x=0, so a brick's faces line up *exactly* with the faces of the
+# bricks already stacked — and Godot counts two exactly-touching rectangles
+# as a hit (measured: a 0.00px gap intersects, a 0.05px gap does not). So a
+# brick descending flush past its neighbour had its next step down refused by
+# a contact of literally zero depth, went limp in mid-air with nothing under
+# it, and only started falling again when the player steered sideways.
+# Settling makes it worse rather than better: a landed brick picks up a
+# thousandth of a radian of lean, which pokes a corner a fraction of a pixel
+# across the line into the column beside it. The case that was caught was
+# refused by an overlap 0.23px wide.
+#
+# The skin comes off *across* the direction of travel and never along it, so
+# a landing is still detected at the exact pixel of contact: on the way down
+# a brick ignores what it grazes to its sides, but nothing it is coming down
+# on. Rotation has no direction of travel, so it is trimmed on both axes.
+#
+# It is half FOOT_INSET on purpose and the two must stay in step. The feet
+# that decide whether a brick is supported are inset by half of FOOT_INSET
+# per side, so an overlap deep enough to refuse a descent is also deep enough
+# for the feet to find. That is what keeps "blocked on the way down" and
+# "something is underneath" the same event, instead of two events with a gap
+# between them for a brick to hang in.
+const QUERY_SKIN := TowerPiece.FOOT_INSET * 0.5
 # An anti-deadlock backstop, and deliberately NOT a gameplay rule.
 #
 # The rule is: a turn ends when something is underneath the brick, never
@@ -494,7 +523,7 @@ func _update_piloting(delta: float) -> void:
 	var step: float = clampf(aim_x - pos.x, -follow * delta, follow * delta)
 	if absf(step) > 0.001:
 		var want := Vector2(pos.x + step, pos.y)
-		if _blocked(Transform2D(rot, want)):
+		if _blocked(Transform2D(rot, want), Vector2(signf(step), 0.0)):
 			aim_x = pos.x # give up on the command rather than grinding against it
 			dash_active = false
 		else:
@@ -512,7 +541,7 @@ func _update_piloting(delta: float) -> void:
 	var fall: float = SOFT_DROP_SPEED if _soft_drop_held() else DESCEND_SPEED
 	var want_down := Vector2(pos.x, pos.y + fall * delta)
 	var landed := false
-	if _blocked(Transform2D(rot, want_down)):
+	if _blocked(Transform2D(rot, want_down), Vector2.DOWN):
 		# Blocked is not the same as landed. If something is genuinely under
 		# the brick the turn is over; if it has merely come up against the
 		# side of a taller stack the player keeps steering, for as long as
@@ -594,10 +623,37 @@ func _query_hits(shape_list: Array[Shape2D], local: Array[Transform2D], xform: T
 	return false
 
 # "Can the brick be here?" — used for every move, in all three axes.
-func _blocked(xform: Transform2D) -> bool:
+#
+# `along` is the world direction the brick is trying to move in, and it is
+# what decides where the contact tolerance is taken off (see QUERY_SKIN).
+# Vector2.ZERO means "no direction" — used for rotation, which trims both
+# axes instead.
+func _blocked(xform: Transform2D, along: Vector2 = Vector2.ZERO) -> bool:
 	if active_piece == null:
 		return false
-	return _query_hits(active_piece.body_shapes, active_piece.body_xforms, xform)
+	return _query_hits(_skinned_shapes(xform, along), active_piece.body_xforms, xform)
+
+# The brick's collision boxes, trimmed by QUERY_SKIN across the direction of
+# travel. The boxes are stored in the brick's own frame, so the world axis to
+# trim has to be brought back into that frame first — at a quarter-turn that
+# is an exact swap of the two axes, and part way through a rotation it splits
+# the skin between them, which is the honest answer for a brick that is
+# moving diagonally in its own terms.
+func _skinned_shapes(xform: Transform2D, along: Vector2) -> Array[Shape2D]:
+	var trim := Vector2(QUERY_SKIN, QUERY_SKIN)
+	if along != Vector2.ZERO:
+		var across: Vector2 = xform.basis_xform_inv(Vector2(-along.y, along.x)).normalized()
+		trim = Vector2(QUERY_SKIN * absf(across.x), QUERY_SKIN * absf(across.y))
+	var out: Array[Shape2D] = []
+	for i in range(active_piece.query_shapes.size()):
+		var size_px: Vector2 = active_piece.boxes[i].size * active_piece.cell
+		var r: RectangleShape2D = active_piece.query_shapes[i]
+		r.size = Vector2(
+			maxf(2.0, size_px.x - trim.x * 2.0),
+			maxf(2.0, size_px.y - trim.y * 2.0)
+		)
+		out.append(r)
+	return out
 
 # "Is anything holding the brick up?" — a different question, and the one
 # that decides whether a turn is over. A brick pressed against the flank of a

@@ -106,6 +106,13 @@ const FOOT_DEPTH := 5.0
 var body_shapes: Array[Shape2D] = []
 var body_xforms: Array[Transform2D] = []
 var foot_shapes: Array[RectangleShape2D] = []
+# Scratch copies of the body boxes, shrunk by a contact tolerance at query
+# time so that merely *touching* the tower is not the same as being inside
+# it. They exist because every command in this mode lands on an exact
+# half-cell lattice, which makes a zero-depth face-to-face contact with the
+# stack the ordinary case rather than a freak one — see TowerMode.QUERY_SKIN.
+# Reused every call, like foot_shapes, rather than allocated per query.
+var query_shapes: Array[RectangleShape2D] = []
 
 func setup(index: int, cell_size: float, slot: int, color: Color) -> void:
 	var data: Dictionary = GameSettings.TETROMINOES[index]
@@ -131,6 +138,7 @@ func setup(index: int, cell_size: float, slot: int, color: Color) -> void:
 	body_shapes = []
 	body_xforms = []
 	foot_shapes = []
+	query_shapes = []
 	var half := Vector2(float(cols), float(rows)) * cell * 0.5
 	for b: Rect2 in boxes:
 		var centre: Vector2 = (b.position + b.size * 0.5) * cell - half
@@ -148,6 +156,7 @@ func setup(index: int, cell_size: float, slot: int, color: Color) -> void:
 		# J is asked about the undersides it actually has. Sized at query
 		# time — see the field comment.
 		foot_shapes.append(RectangleShape2D.new())
+		query_shapes.append(RectangleShape2D.new())
 
 	var mat := PhysicsMaterial.new()
 	mat.friction = FRICTION

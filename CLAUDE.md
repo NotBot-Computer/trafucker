@@ -36,6 +36,11 @@ And one for Pile Up's landings, which asks whether anything is actually under a 
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/LandingProbe.tscn
 ```
 
+And one for Pile Up's *descent*, which asks whether a brick ever stops falling part way down and stays stopped. It is the only tower probe that steers the way the keyboard does — through `_press_steer()`, on the exact half-cell lattice — and that is the whole point: the others aim with `randf()`, so they never line a brick's faces up flush with the stack the way a player does every single turn (docs/PROJECT_STATE.md §5 session T):
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/StallProbe.tscn
+```
+
 For measuring bot behaviour rather than looking at it, `--fixed-fps` disables real-time sync and runs the simulation as fast as the machine allows, so a 60-second round takes a few seconds of wall clock:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 120 res://scenes/Main.tscn

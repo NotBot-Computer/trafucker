@@ -189,11 +189,13 @@ func _measure(p) -> Dictionary:
 
 	# The player's own rule, tested literally: is the brick in contact with
 	# anything at all right now — below it or beside it?
-	var touching_below: bool = _mode._blocked(Transform2D(p.rotation, p.global_position + Vector2(0.0, 2.0)))
-	var touching_side: bool = (
-		_mode._blocked(Transform2D(p.rotation, p.global_position + Vector2(2.0, 0.0)))
-		or _mode._blocked(Transform2D(p.rotation, p.global_position + Vector2(-2.0, 0.0)))
-	)
+	#
+	# Asked of the brick's real collision boxes rather than through _blocked(),
+	# which trims them by QUERY_SKIN so that grazing the tower is not treated
+	# as being inside it. That tolerance is right for deciding whether a move
+	# is legal and wrong for this question: "is it touching" means touching.
+	var touching_below: bool = _touching(p, Vector2(0.0, 2.0))
+	var touching_side: bool = _touching(p, Vector2(2.0, 0.0)) or _touching(p, Vector2(-2.0, 0.0))
 	return {
 		"gap": best if best < INF else 0.0,
 		"wedge": _mode.wedge_timer,
@@ -207,6 +209,11 @@ func _measure(p) -> Dictionary:
 		# one cached here.
 		"lost": p.global_position.y + 4.0 > _mode.LOST_Y,
 	}
+
+func _touching(p, offset: Vector2) -> bool:
+	return _mode._query_hits(
+		p.body_shapes, p.body_xforms, Transform2D(p.rotation, p.global_position + offset)
+	)
 
 func _report() -> void:
 	var mean := 0.0
