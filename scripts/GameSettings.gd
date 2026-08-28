@@ -249,10 +249,18 @@ const PLAYER_CONFIGS: Array[Dictionary] = [
 
 # --- Pile Up (MODE_TOWER) --------------------------------------------------
 
-# The seven car-tetromino bricks, extracted from the user's bloklar.png by
+# The seven car-part tetromino bricks, extracted from the user's yenib.png by
 # scripts/dev/extract_blocks.py. Every sprite is normalised there to an exact
 # `cols x rows` grid of square cells, so one scale factor (cell / 100) fits
 # any of them and nothing here needs a per-piece fudge.
+#
+# The sheet draws three of the pieces in a different orientation than the
+# shapes below, and the art is *not* rotated to fit: each cell is its own
+# upright little panel (a wheel, a battery, a radiator), so the extractor
+# rearranges the cells and leaves every block the right way up. `boxes` and
+# `cols`/`rows` here are the source of truth and the art is fitted to them —
+# extract_blocks.py's CELLS table has to be updated to match if these ever
+# change, and nothing checks that for you at runtime.
 #
 # `boxes` is the piece's collision, in cell units measured from the top-left
 # of its own bounding box. It is deliberately *merged rectangles* rather than
@@ -267,7 +275,7 @@ const PLAYER_CONFIGS: Array[Dictionary] = [
 # PLAYER_SKINS' own "color" entry.
 const TETROMINOES: Array[Dictionary] = [
 	{
-		"name": "I", "cols": 4, "rows": 1, "color": Color(0.30, 0.66, 0.80),
+		"name": "I", "cols": 4, "rows": 1, "color": Color(0.30, 0.79, 0.80),
 		"texture": preload("res://sprites/blocks/piece_i.png"),
 		"boxes": [Rect2(0, 0, 4, 1)],
 	},
@@ -277,7 +285,7 @@ const TETROMINOES: Array[Dictionary] = [
 		"boxes": [Rect2(0, 0, 2, 2)],
 	},
 	{
-		"name": "T", "cols": 3, "rows": 2, "color": Color(0.62, 0.40, 0.80),
+		"name": "T", "cols": 3, "rows": 2, "color": Color(0.70, 0.40, 0.80),
 		"texture": preload("res://sprites/blocks/piece_t.png"),
 		"boxes": [Rect2(0, 0, 3, 1), Rect2(1, 1, 1, 1)],
 	},
