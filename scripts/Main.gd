@@ -15,14 +15,21 @@ const LANE_DIVIDER_SCENE := preload("res://scenes/LaneDivider.tscn")
 @onready var screen_mask: ScreenMask = $HUD/ScreenMask
 @onready var overlay_title: Label = $HUD/Overlay/OverlayTitle
 @onready var overlay_body: Label = $HUD/Overlay/OverlayBody
+@onready var countdown: Countdown = $HUD/Countdown
 
 var boards: Array[PlayerBoard] = []
 var state := "playing"
 
 func _ready() -> void:
+	countdown.finished.connect(_on_countdown_finished)
 	_build_boards()
 	status_label.text = _status_text()
 	_start_round()
+
+# Don't Crash's own model runs in _process (PlayerBoard._process is the whole
+# round), so the countdown is advanced there too — see Countdown's header.
+func _process(delta: float) -> void:
+	countdown.advance(delta)
 
 func _build_boards() -> void:
 	for child in boards_container.get_children():
@@ -147,8 +154,21 @@ func _start_round() -> void:
 	overlay.visible = false
 	for b in boards:
 		b.start_round()
+		# Held at the line until the countdown says go. `active` is the
+		# freeze: PlayerBoard._process and _unhandled_input both gate on it,
+		# so a board with it false doesn't scroll, spawn, steer, drift or
+		# read a key — and a bot driving that board is inside the same gate,
+		# so it stops too. Reusing the flag the mode already has beats adding
+		# a second "paused" one that could disagree with it.
+		b.active = false
 	for d in dividers_container.get_children():
 		d.reset()
+	countdown.start()
+
+func _on_countdown_finished() -> void:
+	for b in boards:
+		if b.alive:
+			b.active = true
 
 # A board has no reference to its siblings, so it can't apply an opponent
 # skill it picked itself — this is the relay: every other board gets it.

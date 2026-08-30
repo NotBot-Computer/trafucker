@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/TowerMode.gd" id="1_tower"]
 [ext_resource type="Script" path="res://scripts/TowerHUD.gd" id="2_tower_hud"]
 [ext_resource type="Script" path="res://scripts/TowerBackground.gd" id="3_tower_bg"]
 [ext_resource type="Script" path="res://scripts/TowerGround.gd" id="4_tower_ground"]
+[ext_resource type="Script" path="res://scripts/Countdown.gd" id="5_countdown"]
 
 [node name="TowerMode" type="Node2D"]
 script = ExtResource("1_tower")
@@ -35,6 +36,11 @@ script = ExtResource("4_tower_ground")
 anchor_right = 1.0
 anchor_bottom = 1.0
 script = ExtResource("2_tower_hud")
+
+[node name="Countdown" type="Control" parent="HUD"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("5_countdown")
 
 [node name="Overlay" type="Control" parent="HUD"]
 visible = false

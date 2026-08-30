@@ -346,8 +346,9 @@ const COLUMN_SHADE := Color(0.06, 0.08, 0.20, 0.10)
 @onready var overlay: Control = $HUD/Overlay
 @onready var overlay_title: Label = $HUD/Overlay/OverlayTitle
 @onready var overlay_body: Label = $HUD/Overlay/OverlayBody
+@onready var countdown: Countdown = $HUD/Countdown
 
-var state := "piloting" # piloting -> settling -> resolving -> piloting, or gameover
+var state := "piloting" # countdown -> piloting -> settling -> resolving -> piloting, or gameover
 var lives: Array[int] = []
 var active_slot: int = 0
 var active_piece: TowerPiece = null
@@ -376,6 +377,8 @@ var best_height := 0
 var bricks_placed := 0
 
 func _ready() -> void:
+	countdown.finished.connect(_on_countdown_finished)
+
 	var rect := RectangleShape2D.new()
 	rect.size = Vector2(PLATFORM_CELLS * CELL, PLATFORM_THICKNESS)
 	platform_shape.shape = rect
@@ -429,6 +432,17 @@ func _start_match() -> void:
 
 	# So the first _begin_turn() advances onto slot 0.
 	active_slot = GameSettings.player_count - 1
+
+	# `countdown` is a state of its own rather than a paused `piloting`:
+	# _physics_process's match has no branch for it, so the descent, the
+	# shape queries and the settle checks are all simply not running, and
+	# _unhandled_input's `state != "piloting"` gate already refuses every key
+	# but Esc. Nothing had to learn the word "paused".
+	state = "countdown"
+	_refresh_hud() # lives and "P1 — GET READY" up before the first brick
+	countdown.start()
+
+func _on_countdown_finished() -> void:
 	_begin_turn()
 
 func _begin_turn() -> void:
@@ -539,6 +553,11 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	_recompute_stack_top()
 	match state:
+		"countdown":
+			# Advanced here, not from the node's own _process: the first
+			# brick is then created on a physics frame, like every other
+			# thing a turn does. See Countdown's header.
+			countdown.advance(delta)
 		"piloting":
 			_update_piloting(delta)
 		"settling":
