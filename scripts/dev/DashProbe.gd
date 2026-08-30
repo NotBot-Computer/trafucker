@@ -16,10 +16,13 @@ extends Node
 ## is indistinguishable from the input being broken, and that is exactly how
 ## it was reported: "i cant dash".
 ##
-## (The dash was a double-tap then and is a button now — it moved because a
-## double-tap and two deliberate half-steps are the same keypresses, so the
-## game had to guess from timing. The measurement below is unchanged by that:
-## it still asks whether dashing differs from not dashing.)
+## (The dash was a double-tap then, and is now a chord of the dash key and a
+## direction key, either one held while the other is pressed. It moved
+## because a double-tap and two deliberate half-steps are the same
+## keypresses, so the game had to guess from timing. The measurement below is
+## unchanged by any of that: it still asks whether dashing differs from not
+## dashing, which is why it calls `_dash()` with the direction already
+## decided. Which keys choose that direction is DashFeelProbe's question.)
 ##
 ## The lesson generalises past this one input. **A feature whose output is
 ## identical to something the player can already do has not been added**, and
@@ -69,9 +72,7 @@ func _physics_process(_delta: float) -> void:
 	match _stage:
 		0:
 			_start_x = _mode.aim_x
-			_mode.last_dir = 1 # as though right had just been pressed
-			_mode.last_dir_timer = _mode.DASH_DIR_GRACE
-			_mode._press_dash()
+			_mode._dash(1) # direction given: how it is chosen is DashFeelProbe's job
 			_fast = _sample(_mode.aim_x - _start_x)
 			_wait = 2
 			_stage = 1

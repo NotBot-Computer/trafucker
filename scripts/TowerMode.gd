@@ -120,9 +120,10 @@ const AIM_BOUND_CELLS := 2.5
 # separate key cannot be misread.
 const STEP_CELLS := 0.5
 const DASH_CELLS := 1.0
-# How long after a direction press the dash still knows which way you meant,
-# so "tap right, then dash" works as well as holding right and dashing.
-const DASH_DIR_GRACE := 0.45
+# The dash key and the direction keys are a chord, and either one may be the
+# one you hold: hold a direction and press dash, or hold dash and press a
+# direction. Both spell the same thing, which is what lets a player pick the
+# order that suits the hand they have on the keyboard.
 const HOLD_REPEAT_DELAY := 0.30
 const HOLD_REPEAT_INTERVAL := 0.08
 # How fast the brick chases the commanded position. High enough that a step
@@ -354,9 +355,9 @@ var next_index: int = 0
 
 var aim_x := 0.0 # the commanded x; the brick chases it at FOLLOW_SPEED
 var aim_steps := 0 # quarter turns; free rotation only starts once the brick lands
-var last_dir := 0 # most recent direction pressed, for a dash with no direction held
-var last_dir_timer := 0.0
 var dash_active := false # true while a dash is still travelling, for the faster follow
+var dash_target_x := 0.0 # where it is headed; the fast follow ends here, not at aim_x
+var dash_dir := 0
 var dash_ghost_x := 0.0
 var dash_ghost_timer := 0.0
 var hold_dir := 0
@@ -449,9 +450,9 @@ func _begin_turn() -> void:
 
 	aim_steps = 0
 	aim_x = 0.0
-	last_dir = 0
-	last_dir_timer = 0.0
 	dash_active = false
+	dash_target_x = 0.0
+	dash_dir = 0
 	dash_ghost_timer = 0.0
 	wedge_timer = 0.0
 	hold_dir = 0
@@ -537,10 +538,6 @@ func _process(delta: float) -> void:
 
 func _physics_process(delta: float) -> void:
 	_recompute_stack_top()
-	last_dir_timer = maxf(0.0, last_dir_timer - delta)
-	if last_dir_timer <= 0.0:
-		last_dir = 0
-
 	match state:
 		"piloting":
 			_update_piloting(delta)
@@ -568,8 +565,24 @@ func _update_piloting(delta: float) -> void:
 	var pos: Vector2 = active_piece.global_position
 	var rot: float = active_piece.rotation
 
-	var follow: float = DASH_FOLLOW_SPEED if dash_active else FOLLOW_SPEED
-	var step: float = clampf(aim_x - pos.x, -follow * delta, follow * delta)
+	# A dash owns the brick only as far as the cell it was aimed at, which is
+	# why it chases `dash_target_x` rather than `aim_x`. Those two come apart
+	# whenever a hold-repeat tick lands mid-dash and pushes the command
+	# further on: chasing `aim_x` would then carry the extra half cell at
+	# dash speed too, and holding a direction would quietly become a
+	# permanent fast mode. (The old guard against that was to cancel the
+	# dash outright on every repeat tick, which cost the dash its fast
+	# frames instead — measured as the first fast frames landing, then the
+	# remainder of the same cell crawling at FOLLOW_SPEED.)
+	var follow: float = FOLLOW_SPEED
+	var goal: float = aim_x
+	if dash_active:
+		if signf(dash_target_x - pos.x) == float(dash_dir):
+			follow = DASH_FOLLOW_SPEED
+			goal = dash_target_x
+		else:
+			dash_active = false # arrived; the ordinary follow takes it from here
+	var step: float = clampf(goal - pos.x, -follow * delta, follow * delta)
 	if absf(step) > 0.001:
 		var want := Vector2(pos.x + step, pos.y)
 		if _blocked(Transform2D(rot, want), Vector2(signf(step), 0.0)):
@@ -577,8 +590,6 @@ func _update_piloting(delta: float) -> void:
 			dash_active = false
 		else:
 			pos = want
-	if dash_active and absf(aim_x - pos.x) < 0.5:
-		dash_active = false
 	dash_ghost_timer = maxf(0.0, dash_ghost_timer - delta)
 
 	var target_rot: float = float(aim_steps) * PI * 0.5
@@ -629,7 +640,6 @@ func _update_hold_repeat(delta: float) -> void:
 	hold_timer -= delta
 	if hold_timer <= 0.0:
 		hold_timer = HOLD_REPEAT_INTERVAL
-		dash_active = false
 		_command_move(dir, STEP_CELLS)
 
 # Steps the *command*, not the brick's live position. Doing it this way is
@@ -639,10 +649,6 @@ func _update_hold_repeat(delta: float) -> void:
 func _command_move(dir: int, cells: float) -> void:
 	if active_piece == null:
 		return
-	var limit: float = maxf(
-		0.0,
-		PLATFORM_CELLS * CELL * 0.5 + AIM_BOUND_CELLS * CELL - active_piece.aim_half_width(aim_steps)
-	)
 	_command_to(aim_x + float(dir) * CELL * cells)
 
 func _command_to(x: float) -> void:
@@ -844,34 +850,75 @@ func _aim_held() -> int:
 func _soft_drop_held() -> bool:
 	return Input.is_physical_key_pressed(GameSettings.PLAYER_CONFIGS[active_slot]["down"])
 
-# A press is always half a cell now. The dash is a separate button.
+func _dash_held() -> bool:
+	return Input.is_physical_key_pressed(GameSettings.PLAYER_CONFIGS[active_slot]["confirm"])
+
+# A direction press is half a cell — unless the dash key is being held, in
+# which case the direction key is what *chooses the way* and the press is the
+# dash itself.
+#
+# This is the same chord as "hold a direction, press dash" read from the
+# other end, and having both is the point: which key ends up under a finger
+# first depends on where the brick already is and which way the hand was
+# going, and a player should not have to plan that. It also retires the
+# nastiest corner this input had. The dash key alone has no direction to go
+# on, and the two previous answers to that were both bad — guess from the
+# last key pressed (surprises the player), or do nothing at all (reads as a
+# broken button, and is exactly how this mechanic was first reported: "i
+# cant dash", §5 session S). With a chord there is a third answer: pressing
+# the dash key on its own is not a dash yet, it is the first half of one,
+# and the direction key that follows finishes it. Nothing is guessed and
+# nothing is swallowed.
+func _press_direction(dir: int) -> void:
+	if active_piece == null:
+		return
+	if _dash_held():
+		_dash(dir)
+		# Keep the repeat armed anyway: a player who holds both keys down is
+		# still asking to keep moving after the dash lands.
+		hold_dir = dir
+		hold_timer = HOLD_REPEAT_DELAY
+	else:
+		_press_steer(dir)
+
+# The plain half-cell step, with no dash key involved. Kept as its own entry
+# point rather than folded into _press_direction() because StallProbe steers
+# through it to walk a brick down the real half-cell lattice (§5 session T).
 func _press_steer(dir: int) -> void:
 	if active_piece == null:
 		return
+	if dash_active and dir != dash_dir:
+		dash_active = false # steering back the other way ends the dash there
 	_command_move(dir, STEP_CELLS)
-	last_dir = dir
-	last_dir_timer = DASH_DIR_GRACE
 	hold_dir = dir
 	hold_timer = HOLD_REPEAT_DELAY
 
-# One whole cell, in the direction being held — or, if none is, the last one
-# pressed a moment ago, so both "hold right and dash" and "tap right, dash"
-# do the same thing. With nothing to go on it does nothing rather than
-# guessing a direction.
+# The dash key: dashes the way you are already holding. Pressed on its own it
+# does nothing *yet* — it is holding down the other half of the chord, and
+# the direction key that follows dashes through _press_direction().
 func _press_dash() -> void:
 	if active_piece == null:
 		return
 	var dir: int = _aim_held()
-	if dir == 0 and last_dir_timer > 0.0:
-		dir = last_dir
-	if dir == 0:
+	if dir != 0:
+		_dash(dir)
+
+# One whole cell sideways, fast, with an afterimage.
+func _dash(dir: int) -> void:
+	if active_piece == null or dir == 0:
+		return
+	# A dash hard against the aim bound cannot move the brick. Starting one
+	# anyway would leave the fast follow armed with nowhere to go and arm
+	# the afterimage for a move that never happens.
+	var before: float = aim_x
+	_command_move(dir, DASH_CELLS)
+	if is_equal_approx(aim_x, before):
 		return
 	dash_ghost_x = active_piece.global_position.x
 	dash_ghost_timer = DASH_GHOST_TIME
 	dash_active = true
-	_command_move(dir, DASH_CELLS)
-	last_dir = dir
-	last_dir_timer = DASH_DIR_GRACE
+	dash_target_x = aim_x
+	dash_dir = dir
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
@@ -900,9 +947,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif key == cfg["confirm"]:
 		_press_dash()
 	elif key == cfg["left"]:
-		_press_steer(-1)
+		_press_direction(-1)
 	elif key == cfg["right"]:
-		_press_steer(1)
+		_press_direction(1)
 
 # --- HUD -------------------------------------------------------------------
 
@@ -934,7 +981,11 @@ func _controls_text() -> String:
 	# One action per line — TowerHUD splits on newlines because the side
 	# column is too narrow for the single-line form.
 	var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[active_slot]
-	return "%s   half a block\n%s   dash a whole block\n%s / %s   rotate\n%s   fall faster" % [
+	# "a block" rather than "a whole block", and "a direction" rather than the
+	# steer label spelled out again: the column gives 196px at font 15, and
+	# P2's "Up + Left / Right   dash a whole block" measures 266. This form's
+	# widest player is 178.
+	return "%s   half a block\n%s + a direction   a block\n%s / %s   rotate\n%s   fall faster" % [
 		cfg["steer_label"],
 		cfg["confirm_label"],
 		OS.get_keycode_string(cfg["skill_opponent"]),
