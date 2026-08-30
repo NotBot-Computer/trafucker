@@ -31,6 +31,11 @@ There is also a much smaller harness for Pile Up's lateral input, which asserts 
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 60 res://scenes/dev/DashProbe.tscn
 ```
 
+`DashProbe` calls `_dash()` with a direction already chosen, so it only ever sees what a dash *does*. `DashFeelProbe` presses real keys through `Input.parse_input_event()` and measures the brick's actual per-frame movement: both orders of the dash chord (hold either key, press the other) against each other, across the six phases of one hold-repeat tick, plus each half of the chord pressed alone. That is where two dashes in a row can behave differently for reasons the player has no control over (docs/PROJECT_STATE.md §5 session U):
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 60 res://scenes/dev/DashFeelProbe.tscn
+```
+
 And one for Pile Up's landings, which asks whether anything is actually under a brick at the moment the player stops being able to steer it:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/LandingProbe.tscn
@@ -51,6 +56,8 @@ For measuring bot behaviour rather than looking at it, `--fixed-fps` disables re
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 120 res://scenes/Main.tscn
 ```
 That boots straight into a round with `GameSettings`' defaults (2 players, no bots), so it's only useful with a throwaway scene that sets `GameSettings.player_count`/`bot_flags`/`bot_difficulty` and instantiates `Main.tscn` itself — see docs/PROJECT_STATE.md §5 session J for what that was used to find.
+
+Both modes open a round with a ~2.7s countdown (`scripts/Countdown.gd`), so anything that waits for play to start — a probe, a screenshot, your own patience — waits through it first. The Pile Up probes already do; they wait on `state == "piloting"` and simply reach it later.
 
 Godot binary lives at `/opt/homebrew/bin/godot` (CLI) — there's also `Godot.app` in `/Applications` for the GUI editor, but the `godot` CLI command works for both editor (`godot .`) and headless (`godot --headless ...`) use.
 
