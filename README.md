@@ -6,7 +6,7 @@ Built in **Godot 4**.
 
 ## Modes
 
-**Don't Crash** — split-screen. Steer between lanes, avoid traffic, survive as long as possible. Speed ramps up over time. Whoever covers the most distance before crashing wins the round.
+**Don't Crash** — split-screen. Steer between lanes, avoid traffic, survive as long as possible. Speed ramps up over time. Three lives each: a crash costs one and knocks you down to a crawl, and you're only out once all three are gone. Whoever covers the most distance wins the round.
 
 **Pile Up** — one shared tower. Players take turns steering car-shaped bricks down onto a single narrow platform, under real physics. When everything stops moving, anything that fell off costs the player who dropped it a life. Three lives each; last builder standing wins.
 
@@ -14,7 +14,7 @@ Built in **Godot 4**.
 
 Launch the game and you'll get: pick a mode → pick 2, 3, or 4 players → each player cycles and locks in a color → off you go.
 
-In **Don't Crash** that colour is your car and each board always has 5 lanes, regardless of player count. In **Pile Up** it marks your lives and whichever brick is currently in the air — every brick already on the pile looks the same, whoever put it there.
+In **Don't Crash** that colour is your car, the three hearts trailing behind it, and each board always has 5 lanes, regardless of player count. In **Pile Up** it marks your lives and whichever brick is currently in the air — every brick already on the pile looks the same, whoever put it there.
 
 ### Playing alone, or against the computer
 
@@ -55,6 +55,8 @@ The moment the brick touches down it stops being yours and becomes ordinary phys
 Double-tap left or right (quickly, twice back-to-back) to **dash** exactly one lane over — a fast eased snap with a fading afterimage trail, on a short per-player cooldown.
 
 While already carrying real speed one way, press the opposite direction to start **drifting** — no separate gesture needed, just a genuine sudden reversal. The car's nose points wherever you're steering, but its actual momentum lags behind at reduced grip (not increased speed), so it visibly slides, leaving a twin skid-mark trail from the rear wheels. Keeps drifting as long as you keep steering in either direction; lets go of grip the instant you release both keys.
+
+You have **three lives**, shown as three hearts in your own car's colour trailing along the road behind you. Hitting traffic wrecks the car you hit, costs a heart, and drops you to a crawl — you then blink for a couple of seconds, during which traffic passes straight through you while you get your speed back. Lose all three and you're out, and the round ends once nobody is left driving.
 
 Press **Enter** to restart after a round ends. Press **Esc** during a round to return to the main menu. **1-4** toggle the AI for each player and **5** changes its difficulty (see above).
 
@@ -99,6 +101,7 @@ sprites/
   road/               road + median tile textures, cropped from one source image
   blocks/             the seven car-tetromino bricks used by Pile Up
   bg/                 Pile Up's parallax backdrop
+  ui/                 countdown glyphs, and the heart used for Don't Crash's lives
 scenes/
   MainMenu.tscn       title screen, mode picker
   PlayerSelect.tscn    choose 2/3/4 players

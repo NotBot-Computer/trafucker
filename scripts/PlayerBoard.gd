@@ -481,11 +481,58 @@ const BOOST_BAR_MARGIN_TOP := 14.0
 # the bot tag never lands on top of either readout.
 const BOT_TAG_Y := 49.0
 
+# --- Lives -----------------------------------------------------------------
+# A crash costs one life instead of ending the round, and a player is only
+# out once all three are gone. The pips are the user's own pixel-art heart,
+# re-hued per player (see _tint_heart_texture) and trailed behind the car
+# rather than parked in a corner of the HUD: each board is a tall narrow
+# lane and the player's eyes are already on their own car, so a life readout
+# anywhere else is a readout nobody looks at mid-round.
+const HEART_TEXTURE := preload("res://sprites/ui/heart.png")
+const MAX_LIVES := 3
+const HEART_HEIGHT := 17.0 # world px, one pip's drawn height
+const HEART_GAP_FRAC := 0.22 # space between two pips, as a fraction of a pip's width
+# Clear px between the car's rear bumper and the row. The bumper always sits
+# at board_height - CAR_BOTTOM_MARGIN whatever the car currently is (ground_y
+# is derived from the car's own height, so Tank Mode's taller footprint does
+# not move it), which is what makes this a fixed line rather than something
+# that shifts under the player mid-round.
+const HEART_TRAIL_GAP := 3.0
+# Behind the car, and behind everything the car throws out of its back end:
+# the boost exhaust and nitro's ground shadow are both z -1 and nitro's own
+# energy layers are z 2-3, so anything coming out of the tail pipe draws over
+# the pips and never the other way round. That is the whole reason the row is
+# its own set of sprites at its own z instead of being drawn in _draw(),
+# which happens at the board's z 0 — in front of the exhaust.
+const HEART_Z := -2
+const HEART_BODY_SAT := 0.25 # at/above this a source pixel is heart body; below it is outline or highlight
+const HEART_MIN_VALUE := 0.85 # floor on a skin colour's own brightness, so a darker car still gets a legible pip
+const HEART_LOSS_POP := 2.2 # how far a spent pip swells on its way out
+const HEART_LOSS_DURATION := 0.45
+
+# Being hit is a setback, not an ending: the car is knocked down to a crawl
+# and eases back up to road speed, blinking for as long as it can't be hit
+# again. INVULN_DURATION has to outlast the traffic the player was already
+# buried in when they crashed, or the second life goes to the same wall of
+# cars that took the first.
+const INVULN_DURATION := 2.2
+const INVULN_SLOW_DURATION := 0.95 # the knocked-down-to-a-crawl part, inside the window above
+const INVULN_SLOW_MULT := 0.32 # speed multiplier at the moment of impact, easing back to 1.0 from there
+const INVULN_BLINK_INTERVAL := 0.09
+const INVULN_ALPHA_LOW := 0.2 # deepest the blink goes, right after the hit
+const INVULN_ALPHA_LOW_END := 0.6 # ...and by the time the window closes, so the blink fades out rather than stopping dead
+
 @onready var road: Road = $Road
 @onready var obstacle_container: Node2D = $ObstacleContainer
 @onready var player_car: Car = $PlayerCar
 
 const PLAYER_KIND := {"width_frac": 0.62, "height_frac": 1.69}
+# Clear px between the car's rear bumper and the bottom edge of the board.
+# It is a constant of the car's *rear*, not of its centre: ground_y subtracts
+# half the car's own height on top of it, so whatever the player is currently
+# driving, the bumper lands on this same line — which is what the heart row
+# hangs off (see _heart_row_y).
+const CAR_BOTTOM_MARGIN := 24.0
 
 var car_x: float
 var car_vx: float = 0.0
@@ -494,6 +541,15 @@ var distance: float = 0.0
 var spawn_timer: float = 0.0
 var alive: bool = true
 var active: bool = false
+
+# Lives, the pips that show them, and the window after a hit during which
+# traffic passes straight through. `alive` still means "this board is out" —
+# it just now flips at zero lives instead of on the first crash.
+var lives: int = MAX_LIVES
+var heart_sprites: Array[Sprite2D] = []
+var invuln_timer: float = 0.0
+var invuln_slow_timer: float = 0.0
+var heart_loss_tween: Tween = null # only ever one at a time: a hit is followed by INVULN_DURATION of grace, far longer than HEART_LOSS_DURATION
 
 var last_tap_time: float = -999.0
 var last_tap_direction: int = 0
@@ -670,6 +726,141 @@ func set_vertical_margin(margin: float) -> void:
 	road.render_margin = margin
 	road.queue_redraw()
 
+# The row of pips sits one fixed line below the car's rear bumper, and only
+# ever follows the car sideways. It deliberately does NOT follow the car's
+# drawn position: Nitro lifts the car NITRO_LIFT_PX up the board and streams
+# a comet out behind it, and pips riding along with it would sit inside that
+# comet for the whole flight. Anchored to the road instead, the lift opens
+# the gap between car and pips and the effect plays out in it.
+func _heart_size() -> Vector2:
+	var tex_size: Vector2 = HEART_TEXTURE.get_size()
+	return Vector2(HEART_HEIGHT * (tex_size.x / tex_size.y), HEART_HEIGHT)
+
+func _heart_row_y() -> float:
+	return board_height - CAR_BOTTOM_MARGIN + HEART_TRAIL_GAP + _heart_size().y * 0.5
+
+func _layout_hearts() -> void:
+	if heart_sprites.is_empty():
+		return
+	var pip := _heart_size()
+	var step: float = pip.x * (1.0 + HEART_GAP_FRAC)
+	# Slots are fixed. A spent pip leaves its gap behind rather than the row
+	# re-centring on what's left, so the ones you still have don't shuffle
+	# sideways at the one moment you can least afford to look down at them.
+	var row_x: float = car_x - step * float(MAX_LIVES - 1) * 0.5
+	var row_y: float = _heart_row_y()
+	for i in range(heart_sprites.size()):
+		var heart: Sprite2D = heart_sprites[i]
+		if is_instance_valid(heart):
+			# Position only — scale belongs to _spend_heart's pop tween, and
+			# writing it here every frame would flatten that animation.
+			heart.position = Vector2(row_x + step * float(i), row_y)
+
+func _build_hearts() -> void:
+	# Killing the tween skips the callback that frees the pip it was popping,
+	# so the free has to happen here regardless of what was in flight — the
+	# same rule the tank's fire overlay follows (see _deactivate_tank_mode).
+	if heart_loss_tween != null and heart_loss_tween.is_valid():
+		heart_loss_tween.kill()
+	heart_loss_tween = null
+	for heart in heart_sprites:
+		if is_instance_valid(heart):
+			heart.queue_free()
+	heart_sprites.clear()
+
+	var tex := _tint_heart_texture()
+	var tex_size: Vector2 = tex.get_size()
+	var pip := _heart_size()
+	for i in range(MAX_LIVES):
+		var heart := Sprite2D.new()
+		heart.texture = tex
+		heart.scale = Vector2(pip.x / tex_size.x, pip.y / tex_size.y)
+		heart.z_index = HEART_Z
+		add_child(heart)
+		heart_sprites.append(heart)
+	_layout_hearts()
+
+# Re-hues the red source pip into this board's own car colour, so a glance
+# at a row of hearts says whose they are without reading a name off it.
+# Only the *saturated* pixels move: the black outline and the white highlight
+# carry no hue of their own, and leaving them be is what keeps a tinted pip
+# legible against the asphalt instead of flattening it into one blob of
+# colour. Each body pixel keeps its own brightness so the art's shading
+# survives the swap — extract_heart.py normalises the brightest body pixel to
+# 1.0 for exactly that multiply, which is why nothing here knows anything
+# about this particular PNG.
+func _tint_heart_texture() -> ImageTexture:
+	var src: Image = HEART_TEXTURE.get_image()
+	if src.is_compressed():
+		src.decompress()
+	src.convert(Image.FORMAT_RGBA8)
+	var out := Image.create(src.get_width(), src.get_height(), false, Image.FORMAT_RGBA8)
+	# A dark skin colour would otherwise produce a pip that reads as a black
+	# smudge at 17px, so brightness has a floor even though hue and saturation
+	# are taken straight from the car.
+	var value: float = max(body_color.v, HEART_MIN_VALUE)
+	for y in range(src.get_height()):
+		for x in range(src.get_width()):
+			var px: Color = src.get_pixel(x, y)
+			if px.a > 0.0 and px.s >= HEART_BODY_SAT:
+				px = Color.from_hsv(body_color.h, body_color.s, px.v * value, px.a)
+			out.set_pixel(x, y, px)
+	return ImageTexture.create_from_image(out)
+
+# `lives` has already been decremented, so it indexes the pip just spent.
+# It swells out of its own slot and fades rather than simply vanishing: at
+# 17px a pip that disappears between two frames is one nobody sees leave,
+# and "wait, how many did I have?" is the single question this readout exists
+# to answer.
+func _spend_heart() -> void:
+	if lives < 0 or lives >= heart_sprites.size():
+		return
+	var heart: Sprite2D = heart_sprites[lives]
+	if not is_instance_valid(heart):
+		return
+	if heart_loss_tween != null and heart_loss_tween.is_valid():
+		heart_loss_tween.kill()
+	heart_loss_tween = create_tween()
+	heart_loss_tween.set_parallel(true)
+	heart_loss_tween.tween_property(heart, "scale", heart.scale * HEART_LOSS_POP, HEART_LOSS_DURATION).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	heart_loss_tween.tween_property(heart, "modulate:a", 0.0, HEART_LOSS_DURATION)
+	heart_loss_tween.set_parallel(false)
+	heart_loss_tween.tween_callback(heart.queue_free)
+
+# A crash costs a life, not the round. The vehicle that landed it is
+# destroyed on the spot — the same burst a crushed or shelled car gets — so
+# it can't carry on driving through a player who is now untouchable; the
+# round only ends here on the last life.
+func _take_hit(vehicle: Car) -> void:
+	lives -= 1
+	_spend_heart()
+	if vehicle != null and is_instance_valid(vehicle):
+		_destroy_vehicle(vehicle)
+	if lives <= 0:
+		alive = false
+		active = false
+		_play_destruction_effect(player_car.position, car_size().x)
+		player_car.modulate.a = 0.35
+		crashed.emit()
+		return
+	invuln_timer = INVULN_DURATION
+	invuln_slow_timer = INVULN_SLOW_DURATION
+	_update_invuln_blink()
+
+# The "you got hit" tell, and the reason a survivable crash still reads as a
+# crash: the car fades in and out for as long as traffic is passing through
+# it. The trough of that fade climbs back toward opaque as the window runs
+# out, so the blink dies away rather than stopping dead — possibly on the
+# transparent half of a cycle, which would leave a ghost car for a frame.
+func _update_invuln_blink() -> void:
+	if invuln_timer <= 0.0:
+		player_car.modulate.a = 1.0
+		return
+	var strength: float = clamp(invuln_timer / INVULN_DURATION, 0.0, 1.0)
+	var low: float = lerp(INVULN_ALPHA_LOW_END, INVULN_ALPHA_LOW, strength)
+	var wave: float = 0.5 + 0.5 * cos(TAU * invuln_timer / (INVULN_BLINK_INTERVAL * 2.0))
+	player_car.modulate.a = lerp(low, 1.0, wave)
+
 func start_round() -> void:
 	for child in obstacle_container.get_children():
 		child.queue_free()
@@ -689,6 +880,9 @@ func start_round() -> void:
 	spawn_timer = spawn_interval()
 	alive = true
 	active = true
+	lives = MAX_LIVES
+	invuln_timer = 0.0
+	invuln_slow_timer = 0.0
 	last_tap_time = -999.0
 	last_tap_direction = 0
 	steer_priority = 0
@@ -733,7 +927,10 @@ func start_round() -> void:
 	# above (they're children of it, see _spawn_taxi) — just drop the stale
 	# references so _update_taxis doesn't iterate freed nodes next round.
 	active_taxis.clear()
-	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - 24.0)
+	player_car.position = Vector2(car_x, board_height - sz.y * 0.5 - CAR_BOTTOM_MARGIN)
+	# After car_x, so the row starts under the car rather than at the board's
+	# left edge for the one frame before _process first lays it out.
+	_build_hearts()
 	road.distance = 0.0
 	road.queue_redraw()
 	# Otherwise the bot carries last round's target line (and a held
@@ -1894,6 +2091,12 @@ func current_speed() -> float:
 		s *= _boost_speed_mult()
 	if recoil_timer > 0.0:
 		s *= TANK_RECOIL_SPEED_MULT
+	# Knocked down to a crawl by the impact and climbing back out of it over
+	# INVULN_SLOW_DURATION. Applied here alongside boost and recoil rather
+	# than to `elapsed`, so a crash costs distance without rewinding the
+	# difficulty ramp for everyone's sake but this player's.
+	if invuln_slow_timer > 0.0:
+		s *= lerp(1.0, INVULN_SLOW_MULT, invuln_slow_timer / INVULN_SLOW_DURATION)
 	if nitro_active:
 		s *= lerp(1.0, NITRO_SPEED_MULT, _nitro_power())
 	return s
@@ -1930,6 +2133,10 @@ func _process(delta: float) -> void:
 	if recoil_timer > 0.0:
 		recoil_timer -= delta
 	recoil_offset = move_toward(recoil_offset, 0.0, TANK_RECOIL_RECOVERY_SPEED * delta)
+	if invuln_timer > 0.0:
+		invuln_timer = max(0.0, invuln_timer - delta)
+		invuln_slow_timer = max(0.0, invuln_slow_timer - delta)
+		_update_invuln_blink()
 	# Phase/timer only — the nitro overlay is placed further down, once the
 	# car's position for this frame actually exists.
 	_update_nitro(delta)
@@ -2024,7 +2231,7 @@ func _process(delta: float) -> void:
 			tilt = clamp(car_vx / max_steer_speed, -1.0, 1.0) * MAX_TILT
 
 	player_car.rotation = tilt
-	var ground_y: float = board_height - sz.y * 0.5 - 24.0 + recoil_offset
+	var ground_y: float = board_height - sz.y * 0.5 - CAR_BOTTOM_MARGIN + recoil_offset
 	player_car.position = Vector2(car_x, ground_y - _nitro_lift() * NITRO_LIFT_PX)
 	if nitro_active:
 		# Engine shudder, purely on the drawn position — car_x is untouched, so
@@ -2034,6 +2241,11 @@ func _process(delta: float) -> void:
 		var amp: float = NITRO_SHUDDER_PX * _nitro_power()
 		player_car.position += Vector2(randf_range(-amp, amp), randf_range(-amp, amp))
 		_update_nitro_visuals(sz, ground_y)
+
+	# Follows car_x only, and is placed from the steering position rather than
+	# from player_car.position on purpose — that one carries Nitro's lift and
+	# its shudder, and pips are a readout, not part of the effect.
+	_layout_hearts()
 
 	elapsed += delta
 	distance += current_speed() * delta
@@ -2363,10 +2575,12 @@ func _on_player_area_entered(area: Area2D) -> void:
 		# cannon hit, just triggered by a collision instead of a shot.
 		_destroy_vehicle(area as Car)
 		return
+	if invuln_timer > 0.0:
+		# Still shaking off the last one. Traffic passes straight through
+		# instead of charging a second life for what the player experienced
+		# as a single crash — they were buried in a lane when they hit, and
+		# the cars behind that one are still arriving.
+		return
 	if not alive:
 		return
-	alive = false
-	active = false
-	_play_destruction_effect(player_car.position, car_size().x)
-	player_car.modulate.a = 0.35
-	crashed.emit()
+	_take_hit(area as Car)
