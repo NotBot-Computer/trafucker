@@ -100,7 +100,10 @@ const SKILL_ICON_OFFSET_FRAC := 1.15 # fraction of car width, icon distance from
 # random-pick-from-pool pattern already used for TRAFFIC_KINDS
 # (_pick_traffic_kind). Adding one means an entry here, a branch in
 # _resolve_skill_choice, and a glyph in SKILL_GLYPHS.
-const SELF_SKILLS := ["tank", "nitro"]
+# "tank"/"nitro" are branches further down this file; everything after them
+# is a SkillCatalog entry backed by its own file under scripts/skills/ — see
+# _apply_skill_effect for how the two kinds are dispatched side by side.
+const SELF_SKILLS := ["tank", "nitro", "siren", "pitstop", "compact"]
 
 # Tank Mode: transform into an invincible tank for a limited time. The
 # player's own confirm key (key_confirm) is repurposed from boost to firing
@@ -261,7 +264,9 @@ const NITRO_SHADOW_POINTS := 18
 # board, never the one who picked — mirrors SELF_SKILLS' pool-of-strings
 # pattern, just resolved on the receiving end (see receive_opponent_skill)
 # instead of locally.
-const OPPONENT_SKILLS := ["taxi"]
+# "taxi" is a branch further down this file; the rest are SkillCatalog
+# entries applied on the receiving board — see receive_opponent_skill.
+const OPPONENT_SKILLS := ["taxi", "roadblock", "slick", "smoke"]
 
 # The art each skill is advertised with on the choice icons. Every entry of
 # SELF_SKILLS/OPPONENT_SKILLS needs one or its icon draws bare (see
@@ -272,6 +277,14 @@ const SKILL_GLYPHS := {
 	"nitro": NITRO_FRAME_BURST,
 	"taxi": TAXI_TEXTURE,
 }
+
+# Timer bar for a modular skill, stacked under the boost/tank/nitro bars in
+# whatever order they were applied. Deliberately the same shape as
+# _draw_tank_timer/_draw_nitro_timer so a fourth readout doesn't look like a
+# different kind of thing — only the colour, which each skill supplies, tells
+# them apart.
+const SKILL_BAR_HEIGHT := 6.0
+const SKILL_BAR_GAP := 4.0
 
 # Taxi (the first opponent skill): a reckless cab barges onto a rival's board
 # from behind — spawning past the bottom edge, since "behind" in this game's
@@ -607,6 +620,14 @@ var nitro_shadow: Polygon2D = null # stays down on the asphalt while the car is 
 var pending_self_skill: String = ""
 var pending_opponent_skill: String = ""
 
+# Modular skills currently running on this board (SkillEffect instances, see
+# scripts/skills/SkillEffect.gd). Both categories land here: a self skill the
+# player picked and an opponent skill a rival sent are the same kind of
+# object, they just arrive through different doors. Ticked in _process,
+# drawn from _draw and from skill_overlay, and wiped by start_round().
+var active_effects: Array = []
+var skill_overlay: SkillOverlay = null # child node that draws effects ABOVE the traffic
+
 var active_taxis: Array[Car] = [] # taxis currently running riot on / leaving this board — see _spawn_taxi/_update_taxis. More than one at a time is normal: simultaneous rivals stack (see Main._on_opponent_skill_triggered).
 
 const BOOST_TIER_BOUNDS: Array[float] = [0.0, BOOST_TIER_LOW_MAX, BOOST_TIER_MID_MAX, 1.0]
@@ -657,6 +678,19 @@ func _draw() -> void:
 		timer_y += TANK_BAR_GAP + TANK_BAR_HEIGHT
 	if nitro_active:
 		_draw_nitro_timer(bar_x, timer_y, bar_w)
+		timer_y += NITRO_BAR_GAP + NITRO_BAR_HEIGHT
+	for effect in active_effects:
+		var effect_bar: Color = effect.bar_color()
+		if effect_bar.a <= 0.0:
+			continue # instant skills, and any effect that would rather not say
+		_draw_skill_timer(bar_x, timer_y, bar_w, effect.bar_fraction(), effect_bar)
+		timer_y += SKILL_BAR_GAP + SKILL_BAR_HEIGHT
+
+	# Road-surface effects: above the asphalt, under the traffic and the car.
+	# Anything that belongs in the air instead goes in draw_overlay(), which
+	# skill_overlay draws from — see SkillOverlay.
+	for effect in active_effects:
+		effect.draw_board()
 
 	if choosing_skill:
 		_draw_skill_choice()
@@ -678,6 +712,12 @@ func _draw_nitro_timer(bar_x: float, bar_top: float, bar_w: float) -> void:
 	var frac: float = clamp(nitro_timer / NITRO_TOTAL_DURATION, 0.0, 1.0)
 	draw_rect(Rect2(bar_x, bar_y, bar_w * frac, NITRO_BAR_HEIGHT), Color(0.35, 0.72, 1.0, 0.95), true)
 	draw_rect(Rect2(bar_x, bar_y, bar_w, NITRO_BAR_HEIGHT), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
+
+func _draw_skill_timer(bar_x: float, bar_top: float, bar_w: float, frac: float, color: Color) -> void:
+	var bar_y := bar_top + SKILL_BAR_GAP
+	draw_rect(Rect2(bar_x, bar_y, bar_w, SKILL_BAR_HEIGHT), Color(0.0, 0.0, 0.0, 0.35), true)
+	draw_rect(Rect2(bar_x, bar_y, bar_w * clamp(frac, 0.0, 1.0), SKILL_BAR_HEIGHT), color, true)
+	draw_rect(Rect2(bar_x, bar_y, bar_w, SKILL_BAR_HEIGHT), Color(1.0, 1.0, 1.0, 0.25), false, 1.5)
 
 func _draw_skill_choice() -> void:
 	var sz := car_size()
@@ -704,7 +744,12 @@ func _draw_skill_icon(center: Vector2, r: float, color: Color, key_label: String
 	draw_circle(center, r * 1.6, Color(color.r, color.g, color.b, 0.18))
 	draw_circle(center, r, Color(color.r, color.g, color.b, 0.95))
 	draw_circle(center, r, Color(1.0, 1.0, 1.0, 0.55), false, 2.0)
+	# SKILL_GLYPHS only holds the three skills that predate scripts/skills/;
+	# everything since carries its glyph in its own catalog row instead of
+	# needing a second table here to stay in sync with.
 	var glyph: Texture2D = SKILL_GLYPHS.get(skill, null)
+	if glyph == null:
+		glyph = SkillCatalog.glyph_of(skill)
 	if glyph != null:
 		var tex_size: Vector2 = glyph.get_size()
 		var icon_h: float = r * 1.5
@@ -719,6 +764,11 @@ func _ready() -> void:
 	road.height = board_height
 	road.lane_count = lane_count
 	player_car.area_entered.connect(_on_player_area_entered)
+	# Added here rather than in the scene file so a board built by hand (the
+	# dev harnesses instantiate PlayerBoard directly) gets one too.
+	skill_overlay = SkillOverlay.new()
+	skill_overlay.board = self
+	add_child(skill_overlay)
 	if is_bot and bot == null:
 		set_bot(true)
 
@@ -812,6 +862,10 @@ func _take_hit(vehicle: Car) -> void:
 	if lives <= 0:
 		alive = false
 		active = false
+		# _process stops here, so anything still running would freeze on
+		# screen — a smoke bank or a spill parked over a wreck for the rest
+		# of the round.
+		_clear_skill_effects()
 		_play_destruction_effect(player_car.position, car_size().x)
 		player_car.modulate.a = 0.35
 		crashed.emit()
@@ -835,6 +889,9 @@ func _update_invuln_blink() -> void:
 	player_car.modulate.a = lerp(low, 1.0, wave)
 
 func start_round() -> void:
+	# First, so an effect's deactivate() can free its own nodes out of the
+	# obstacle container before the wipe below frees them underneath it.
+	_clear_skill_effects()
 	for child in obstacle_container.get_children():
 		child.queue_free()
 
@@ -1071,11 +1128,14 @@ func _roll_pending_skills() -> void:
 func _resolve_skill_choice(category: String) -> void:
 	choosing_skill = false
 	if category == "self":
-		match pending_self_skill:
-			"tank":
-				_activate_tank_mode()
-			"nitro":
-				_activate_nitro()
+		if SkillCatalog.has_skill(pending_self_skill):
+			_apply_skill_effect(pending_self_skill)
+		else:
+			match pending_self_skill:
+				"tank":
+					_activate_tank_mode()
+				"nitro":
+					_activate_nitro()
 	else:
 		opponent_skill_triggered.emit(pending_opponent_skill)
 
@@ -1085,8 +1145,125 @@ func _resolve_skill_choice(category: String) -> void:
 func receive_opponent_skill(skill: String) -> void:
 	if not alive:
 		return
+	if SkillCatalog.has_skill(skill):
+		_apply_skill_effect(skill)
+		return
 	if skill == "taxi":
 		_spawn_taxi()
+
+# --- Modular skills (scripts/skills/) --------------------------------------
+# Everything below is the plumbing for SkillEffect subclasses. It knows
+# nothing about any individual skill: what one does lives entirely in its own
+# file, which is what lets a new one be written without touching this one.
+
+# Starts a skill on this board. Re-applying one that is already running
+# refreshes its clock rather than stacking a second copy — the same rule Tank
+# Mode follows, and the one a re-collected pickup follows for the choice.
+func _apply_skill_effect(id: String) -> void:
+	for effect in active_effects:
+		if effect.id == id:
+			effect.time_left = effect.duration()
+			effect.refresh()
+			queue_redraw()
+			return
+	var fresh := SkillCatalog.make(id, self)
+	if fresh == null:
+		return
+	fresh.time_left = fresh.duration()
+	# Listed BEFORE activate() runs, so anything activate() asks this board
+	# — refresh_car_size() after claiming a car_kind(), any of the
+	# multipliers — is answered with this effect counted. Compact's first
+	# version had to defer its shrink to its first tick() to get around the
+	# opposite order.
+	active_effects.append(fresh)
+	fresh.activate()
+	# An instant skill (duration 0.0) has already done everything it will
+	# ever do, so it is out of the list again before this returns — nothing
+	# then has to remember to skip it on every frame of the rest of the round.
+	if fresh.is_done():
+		active_effects.erase(fresh)
+		fresh.deactivate()
+	queue_redraw()
+
+func _update_skill_effects(delta: float) -> void:
+	if active_effects.is_empty():
+		return
+	var survivors: Array = []
+	var finished: Array = []
+	for effect in active_effects:
+		effect.time_left -= delta
+		effect.tick(delta)
+		if effect.is_done():
+			finished.append(effect)
+		else:
+			survivors.append(effect)
+	active_effects = survivors
+	# Out of the list first, then put back — the mirror of _apply_skill_effect.
+	# A deactivate() that asks the board to recompute the car's size must
+	# not be answered by the very effect that is being retired.
+	for effect in finished:
+		effect.deactivate()
+	if not finished.is_empty():
+		_redraw_skill_layers()
+
+# One place every live effect is put back. Safe to call with nothing running,
+# and called from both ends a round can stop at: a restart and an
+# elimination.
+func _clear_skill_effects() -> void:
+	var finished: Array = active_effects
+	active_effects = []
+	for effect in finished:
+		effect.deactivate()
+	_redraw_skill_layers()
+
+# One more draw after the last effect leaves. A CanvasItem keeps its last
+# draw list until something asks for another, and _process only asks the
+# overlay while active_effects is non-empty — so without this, a skill's
+# final frame stays painted: a faint corridor after Make Way runs out, or,
+# far worse, a full-density smoke bank left over a wreck for the rest of the
+# round, because elimination stops _process outright. Smoke Screen's author
+# found it and worked around it from deactivate(); it belongs here, where
+# every effect gets it whether or not it thought of it. Both layers, since
+# draw_board() has the same residue problem on a board that has stopped
+# processing.
+func _redraw_skill_layers() -> void:
+	queue_redraw()
+	if skill_overlay != null:
+		skill_overlay.queue_redraw()
+
+# The three physics hooks are combined by multiplying, so two effects that
+# both slow the car compound rather than one silently winning.
+func _effect_speed_mult() -> float:
+	var m := 1.0
+	for effect in active_effects:
+		m *= float(effect.road_speed_mult())
+	return m
+
+func _effect_steer_mult() -> float:
+	var m := 1.0
+	for effect in active_effects:
+		m *= float(effect.steer_speed_mult())
+	return m
+
+func _effect_grip_mult() -> float:
+	var m := 1.0
+	for effect in active_effects:
+		m *= float(effect.grip_mult())
+	return m
+
+# First claim wins — see _current_kind for why this is not averaged.
+func _effect_car_kind() -> Dictionary:
+	for effect in active_effects:
+		var kind: Dictionary = effect.car_kind()
+		if not kind.is_empty():
+			return kind
+	return {}
+
+func _effect_absorbs_crash(vehicle) -> bool:
+	for effect in active_effects:
+		if effect.absorbs_crash(vehicle):
+			return true
+	return false
 
 func _try_activate_boost() -> void:
 	if boost_active or boost_charge <= 0.0:
@@ -1127,8 +1304,7 @@ func _deactivate_tank_mode() -> void:
 	if fire_effect_sprite != null and is_instance_valid(fire_effect_sprite):
 		fire_effect_sprite.queue_free()
 	fire_effect_sprite = null
-	var sz := _car_size(PLAYER_KIND)
-	player_car.set_size(sz.x, sz.y)
+	refresh_car_size()
 	if player_texture != null:
 		player_car.set_texture(player_texture)
 
@@ -2020,7 +2196,24 @@ func _car_size(kind_cfg: Dictionary) -> Vector2:
 # icon offset) reads this instead so they stay correct against the tank's
 # larger footprint too.
 func _current_kind() -> Dictionary:
-	return TANK_KIND if tank_mode_active else PLAYER_KIND
+	if tank_mode_active:
+		return TANK_KIND
+	# A modular skill may resize the car too (see SkillEffect.car_kind). The
+	# first live one that claims a size wins, so two overlapping resizes can
+	# never average into a footprint neither of them asked for.
+	var from_effect := _effect_car_kind()
+	if not from_effect.is_empty():
+		return from_effect
+	return PLAYER_KIND
+
+# Puts the car sprite's drawn size back in step with whatever _current_kind()
+# now says. Tank Mode used to spell this out at both ends of its transform;
+# it has to be shared now that a skill can change the footprint underneath it
+# — otherwise a tank ending while a resize is still live snaps the car back
+# to PLAYER_KIND and leaves car_size() disagreeing with what is on screen.
+func refresh_car_size() -> void:
+	var sz := car_size()
+	player_car.set_size(sz.x, sz.y)
 
 # The player car's footprint right now. Was spelled out as
 # _car_size(_current_kind()) in four places; BotDriver needs it too, to work
@@ -2040,7 +2233,7 @@ func steer_bounds() -> Vector2:
 # transformed (a tank handles heavier). One function so the bot's sense of
 # its own agility cannot drift out of sync with the physics it is driving.
 func steer_top_speed() -> float:
-	return MAX_STEER_SPEED * (TANK_STEER_SPEED_MULT if tank_mode_active else 1.0)
+	return MAX_STEER_SPEED * (TANK_STEER_SPEED_MULT if tank_mode_active else 1.0) * _effect_steer_mult()
 
 # How long the car keeps coasting sideways after the input stops: car_vx
 # eases toward its target at STEER_RESPONSE per second, so 1/STEER_RESPONSE
@@ -2072,6 +2265,7 @@ func current_speed() -> float:
 		s *= lerp(1.0, INVULN_SLOW_MULT, invuln_slow_timer / INVULN_SLOW_DURATION)
 	if nitro_active:
 		s *= lerp(1.0, NITRO_SPEED_MULT, _nitro_power())
+	s *= _effect_speed_mult()
 	return s
 
 func spawn_interval() -> float:
@@ -2113,6 +2307,8 @@ func _process(delta: float) -> void:
 	# Phase/timer only — the nitro overlay is placed further down, once the
 	# car's position for this frame actually exists.
 	_update_nitro(delta)
+	# Before the steering block below, which reads their steer/grip hooks.
+	_update_skill_effects(delta)
 
 	var sz := car_size()
 	var tilt: float
@@ -2163,7 +2359,7 @@ func _process(delta: float) -> void:
 			else:
 				drift_release_timer = DRIFT_RELEASE_GRACE
 
-		var grip := STEER_RESPONSE * (DRIFT_GRIP_MULT if drift_sliding else 1.0)
+		var grip := STEER_RESPONSE * (DRIFT_GRIP_MULT if drift_sliding else 1.0) * _effect_grip_mult()
 		var approach := 1.0 - exp(-grip * delta)
 		car_vx += (target_vx - car_vx) * approach
 
@@ -2275,6 +2471,9 @@ func _process(delta: float) -> void:
 		boost_charge = min(1.0, boost_charge + BOOST_FILL_PER_SECOND * delta)
 
 	queue_redraw()
+	# Its own CanvasItem, so this board's queue_redraw() does not cover it.
+	if skill_overlay != null and not active_effects.is_empty():
+		skill_overlay.queue_redraw()
 
 func _spawn_dash_ghost() -> void:
 	if player_car.sprite.texture == null:
@@ -2555,5 +2754,10 @@ func _on_player_area_entered(area: Area2D) -> void:
 		# the cars behind that one are still arriving.
 		return
 	if not alive:
+		return
+	# A skill may eat this one instead (a shield, a bumper, anything that
+	# spends itself to keep a life). It is handed the vehicle and decides
+	# what happens to it — nothing below will.
+	if _effect_absorbs_crash(area as Car):
 		return
 	_take_hit(area as Car)

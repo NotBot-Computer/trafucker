@@ -51,6 +51,11 @@ And one for Pile Up's *pace*, which splits a turn into the descent, the settle a
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/PaceProbe.tscn
 ```
 
+And one for Don't Crash's **modular skills** (`scripts/skills/`), which runs every catalogued skill through three lifecycles — runs out, cut mid-effect, cut by a restart — and demands the board come back identical each time: no live effects, physics multipliers at exactly 1.0, the car at its normal footprint, and no leaked child node (the session-G smoke-sprite class of bug). It also checks that every id in `SELF_SKILLS`/`OPPONENT_SKILLS` is applied by something and has a glyph. Run it after touching anything under `scripts/skills/`, the pools, or `_apply_skill_effect`. It cannot see drawing — headless has no renderer — so a skill whose visuals are broken passes it:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/SkillProbe.tscn
+```
+
 For measuring bot behaviour rather than looking at it, `--fixed-fps` disables real-time sync and runs the simulation as fast as the machine allows, so a 60-second round takes a few seconds of wall clock:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 120 res://scenes/Main.tscn

@@ -472,7 +472,14 @@ func _update_skill_choice(delta: float, ctx: Dictionary) -> void:
 	if skill_timer > 0.0:
 		return
 	skill_timer = -1.0
-	# Boxed in, take the one that saves you (SELF_SKILLS is Tank Mode, i.e.
-	# temporary invincibility); with room to breathe, spend it on the others.
+	# Boxed in, take the side that might save you; with room to breathe,
+	# spend it on the others. This was written when SELF_SKILLS held one
+	# entry and "self" meant Tank Mode, i.e. certain temporary
+	# invincibility. It is now a five-entry pool and the roll is made before
+	# the pick (_roll_pending_skills), so "self" is a rescue only some of the
+	# time — the bot does not read pending_self_skill to find out. Left as a
+	# coin-weighting rather than a lookup on purpose: it plays the odds the
+	# way a player who hasn't looked at the icon would, and nothing about
+	# this heuristic has been tuned against real skills yet.
 	var pressured: bool = _threat_at(board.car_x, 0.0, ctx) < SKILL_PRESSURE_TTI
 	board._resolve_skill_choice("self" if pressured or randf() < 0.45 else "opponent")
