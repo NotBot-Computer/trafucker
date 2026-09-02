@@ -18,10 +18,11 @@ Two things here are load-bearing rather than tidiness:
     wherever the ratio puts them — sometimes on a seam — and a single seam
     sample turns one block of the heart a different colour.
 
-  * **The saturated pixels are normalised to full value.** `PlayerBoard`
-    re-hues those pixels into each player's own car colour at runtime and
-    keeps each pixel's own brightness so the art's shading survives the swap
-    (see `_tint_heart_texture`). That multiply only lands on the intended
+  * **The saturated pixels are normalised to full value.** The game re-hues
+    those pixels into each player's own colour at runtime and keeps each
+    pixel's own brightness so the art's shading survives the swap (see
+    `HeartPips.tinted`, which both modes draw their life pips through — the
+    car's trailing row and Pile Up's HUD cards). That multiply only lands on the intended
     colour if the brightest body pixel here is 1.0, so the normalisation is
     what lets the game side hold no constant about this particular PNG. The
     outline (black) and the highlight (white) are unsaturated and are left

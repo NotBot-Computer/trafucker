@@ -484,11 +484,16 @@ const BOT_TAG_Y := 49.0
 # --- Lives -----------------------------------------------------------------
 # A crash costs one life instead of ending the round, and a player is only
 # out once all three are gone. The pips are the user's own pixel-art heart,
-# re-hued per player (see _tint_heart_texture) and trailed behind the car
-# rather than parked in a corner of the HUD: each board is a tall narrow
-# lane and the player's eyes are already on their own car, so a life readout
-# anywhere else is a readout nobody looks at mid-round.
-const HEART_TEXTURE := preload("res://sprites/ui/heart.png")
+# re-hued per player and trailed behind the car rather than parked in a corner
+# of the HUD: each board is a tall narrow lane and the player's eyes are
+# already on their own car, so a life readout anywhere else is a readout
+# nobody looks at mid-round.
+#
+# The art, the recolour and the loss animation's numbers live in HeartPips —
+# Pile Up's HUD draws the same pip, and one of these two modes copying the
+# other's tint loop is how the median came to scroll at its own speed for
+# three sessions (see SpeedRamp's header). Only the layout is local, because
+# a 620px lane and a 224px HUD card genuinely disagree about it.
 const MAX_LIVES := 3
 const HEART_HEIGHT := 17.0 # world px, one pip's drawn height
 const HEART_GAP_FRAC := 0.22 # space between two pips, as a fraction of a pip's width
@@ -505,10 +510,6 @@ const HEART_TRAIL_GAP := 3.0
 # its own set of sprites at its own z instead of being drawn in _draw(),
 # which happens at the board's z 0 — in front of the exhaust.
 const HEART_Z := -2
-const HEART_BODY_SAT := 0.25 # at/above this a source pixel is heart body; below it is outline or highlight
-const HEART_MIN_VALUE := 0.85 # floor on a skin colour's own brightness, so a darker car still gets a legible pip
-const HEART_LOSS_POP := 2.2 # how far a spent pip swells on its way out
-const HEART_LOSS_DURATION := 0.45
 
 # Being hit is a setback, not an ending: the car is knocked down to a crawl
 # and eases back up to road speed, blinking for as long as it can't be hit
@@ -549,7 +550,7 @@ var lives: int = MAX_LIVES
 var heart_sprites: Array[Sprite2D] = []
 var invuln_timer: float = 0.0
 var invuln_slow_timer: float = 0.0
-var heart_loss_tween: Tween = null # only ever one at a time: a hit is followed by INVULN_DURATION of grace, far longer than HEART_LOSS_DURATION
+var heart_loss_tween: Tween = null # only ever one at a time: a hit is followed by INVULN_DURATION of grace, far longer than HeartPips.LOSS_DURATION
 
 var last_tap_time: float = -999.0
 var last_tap_direction: int = 0
@@ -733,8 +734,7 @@ func set_vertical_margin(margin: float) -> void:
 # comet for the whole flight. Anchored to the road instead, the lift opens
 # the gap between car and pips and the effect plays out in it.
 func _heart_size() -> Vector2:
-	var tex_size: Vector2 = HEART_TEXTURE.get_size()
-	return Vector2(HEART_HEIGHT * (tex_size.x / tex_size.y), HEART_HEIGHT)
+	return HeartPips.size_at(HEART_HEIGHT)
 
 func _heart_row_y() -> float:
 	return board_height - CAR_BOTTOM_MARGIN + HEART_TRAIL_GAP + _heart_size().y * 0.5
@@ -768,7 +768,7 @@ func _build_hearts() -> void:
 			heart.queue_free()
 	heart_sprites.clear()
 
-	var tex := _tint_heart_texture()
+	var tex := HeartPips.tinted(body_color)
 	var tex_size: Vector2 = tex.get_size()
 	var pip := _heart_size()
 	for i in range(MAX_LIVES):
@@ -779,33 +779,6 @@ func _build_hearts() -> void:
 		add_child(heart)
 		heart_sprites.append(heart)
 	_layout_hearts()
-
-# Re-hues the red source pip into this board's own car colour, so a glance
-# at a row of hearts says whose they are without reading a name off it.
-# Only the *saturated* pixels move: the black outline and the white highlight
-# carry no hue of their own, and leaving them be is what keeps a tinted pip
-# legible against the asphalt instead of flattening it into one blob of
-# colour. Each body pixel keeps its own brightness so the art's shading
-# survives the swap — extract_heart.py normalises the brightest body pixel to
-# 1.0 for exactly that multiply, which is why nothing here knows anything
-# about this particular PNG.
-func _tint_heart_texture() -> ImageTexture:
-	var src: Image = HEART_TEXTURE.get_image()
-	if src.is_compressed():
-		src.decompress()
-	src.convert(Image.FORMAT_RGBA8)
-	var out := Image.create(src.get_width(), src.get_height(), false, Image.FORMAT_RGBA8)
-	# A dark skin colour would otherwise produce a pip that reads as a black
-	# smudge at 17px, so brightness has a floor even though hue and saturation
-	# are taken straight from the car.
-	var value: float = max(body_color.v, HEART_MIN_VALUE)
-	for y in range(src.get_height()):
-		for x in range(src.get_width()):
-			var px: Color = src.get_pixel(x, y)
-			if px.a > 0.0 and px.s >= HEART_BODY_SAT:
-				px = Color.from_hsv(body_color.h, body_color.s, px.v * value, px.a)
-			out.set_pixel(x, y, px)
-	return ImageTexture.create_from_image(out)
 
 # `lives` has already been decremented, so it indexes the pip just spent.
 # It swells out of its own slot and fades rather than simply vanishing: at
@@ -822,8 +795,8 @@ func _spend_heart() -> void:
 		heart_loss_tween.kill()
 	heart_loss_tween = create_tween()
 	heart_loss_tween.set_parallel(true)
-	heart_loss_tween.tween_property(heart, "scale", heart.scale * HEART_LOSS_POP, HEART_LOSS_DURATION).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	heart_loss_tween.tween_property(heart, "modulate:a", 0.0, HEART_LOSS_DURATION)
+	heart_loss_tween.tween_property(heart, "scale", heart.scale * HeartPips.LOSS_POP, HeartPips.LOSS_DURATION).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	heart_loss_tween.tween_property(heart, "modulate:a", 0.0, HeartPips.LOSS_DURATION)
 	heart_loss_tween.set_parallel(false)
 	heart_loss_tween.tween_callback(heart.queue_free)
 

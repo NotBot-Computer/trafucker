@@ -14,7 +14,7 @@ Built in **Godot 4**.
 
 Launch the game and you'll get: pick a mode → pick 2, 3, or 4 players → each player cycles and locks in a color → off you go.
 
-In **Don't Crash** that colour is your car, the three hearts trailing behind it, and each board always has 5 lanes, regardless of player count. In **Pile Up** it marks your lives and whichever brick is currently in the air — every brick already on the pile looks the same, whoever put it there.
+In **Don't Crash** that colour is your car, the three hearts trailing behind it, and each board always has 5 lanes, regardless of player count. In **Pile Up** it marks whichever brick is currently in the air — every brick already on the pile looks the same, whoever put it there — and the three hearts on your HUD card, the same pip in the same colour as the ones behind a car in the other mode.
 
 ### Playing alone, or against the computer
 
@@ -101,7 +101,7 @@ sprites/
   road/               road + median tile textures, cropped from one source image
   blocks/             the seven car-tetromino bricks used by Pile Up
   bg/                 Pile Up's parallax backdrop
-  ui/                 countdown glyphs, and the heart used for Don't Crash's lives
+  ui/                 countdown glyphs, and the heart both modes show a life with
 scenes/
   MainMenu.tscn       title screen, mode picker
   PlayerSelect.tscn    choose 2/3/4 players
@@ -122,6 +122,7 @@ scripts/
   BotDriver.gd          the AI: reads the traffic, plans a lane, drives PlayerBoard's own controls
   Road.gd               lane math and scrolling road-texture rendering
   Car.gd                 swaps between placeholder shape and an assigned texture
+  HeartPips.gd          the life pip both modes draw, and its per-player recolour
   LaneDivider.gd         scrolling grass/tree median renderer
   TowerMode.gd          Pile Up: turn order, drop/settle/resolve loop, lives, camera
   TowerPiece.gd         one brick: collision from cell rects, physics material, fall cap

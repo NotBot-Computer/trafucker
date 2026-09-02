@@ -428,7 +428,9 @@ func _start_match() -> void:
 	backdrop.set_scroll(0.0)
 	next_index = randi() % GameSettings.TETROMINOES.size()
 	overlay.visible = false
-	hud.clear_message()
+	# Not just the toast: a pip left mid-pop by the last match would play out
+	# over this one's fresh row of three.
+	hud.reset()
 
 	# So the first _begin_turn() advances onto slot 0.
 	active_slot = GameSettings.player_count - 1
@@ -505,6 +507,10 @@ func _resolve_turn() -> void:
 
 	if fallen_this_turn > 0:
 		lives[active_slot] = max(0, lives[active_slot] - 1)
+		# The count is already down, so it indexes the pip just spent — the
+		# same convention PlayerBoard._spend_heart() uses on the other mode's
+		# row. The HUD swells it out of its slot rather than blanking it.
+		hud.spend_life(active_slot, lives[active_slot])
 		var who: String = GameSettings.PLAYER_CONFIGS[active_slot]["name"]
 		var what: String = "BRICK" if fallen_this_turn == 1 else "%d BRICKS" % fallen_this_turn
 		if lives[active_slot] <= 0:
