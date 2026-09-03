@@ -189,11 +189,21 @@ const BASE_COLS := 5
 # How far the floor's density wanders either side of BASE_ALPHA, as a
 # fraction of it, and how fast. Two sine components at an awkward ratio in
 # both axes (the same trick Oil Slick's fishtail uses, for the same reason: a
-# single one is a pattern the eye locks onto). 0.20 is as far as this goes:
-# the floor is the thing that is true everywhere, the puffs are what should
-# carry the big variation, and much past this the thin spots start reading as
-# holes rather than as thin spots.
-const BASE_VARIATION := 0.20
+# single one is a pattern the eye locks onto).
+#
+# 0.16 rather than the 0.20 this shipped with, and the reason is arithmetic
+# rather than taste: BASE_ALPHA * (1 + BASE_VARIATION) must stay under 1.0 or
+# the thick half of the drift clips flat against opaque (see _draw_base,
+# where the clamp used to sit in the wrong place and did exactly that). At
+# BASE_ALPHA 0.86 that ceiling is 0.163. The band lost nothing by the trade:
+# the floor's real range is 0.72-1.00 where it used to be 0.64-0.80, so both
+# the thin spots and the knots moved the way the ask wanted and the spread
+# between them is *wider* than before, not narrower.
+#
+# The floor is still the thing that is true everywhere and the puffs are
+# still what carry the big variation; much past this the thin spots start
+# reading as holes rather than as thin spots.
+const BASE_VARIATION := 0.16
 const WOBBLE_X_SCALE := 0.0091 # rad/px across the board
 const WOBBLE_Y_SCALE := 0.0063 # rad/px down it
 const WOBBLE_DRIFT := 0.27 # rad/s — the whole field creeps, so it never sets
@@ -201,44 +211,55 @@ const WOBBLE_DRIFT := 0.27 # rad/s — the whole field creeps, so it never sets
 # --- Density ----------------------------------------------------------------
 #
 # Alpha composes as 1 - Π(1 - a), so the numbers below are chosen for what
-# they add up to, not for what each is:
-#   * the floor at its thinnest (BASE_ALPHA * (1 - BASE_VARIATION)):  0.64
-#   * the floor at its thickest:                                      0.96
-#   * floor + two puff edges (the typical spot at PUFF_COUNT 34):     ~0.86
-#   * floor + halo + core at a puff's centre:                         ~0.92
-#   * floor + three halos + two cores (the thickest knot):            ~0.98
+# they add up to, not for what each is. What actually matters is the
+# *transmission* (1 - alpha) — the fraction of a car's contrast that survives
+# — so it is in the right-hand column, because that is the thing that halved:
 #
-# This has been raised twice against play, and the file's original caution —
-# that above ~0.85 "the road is simply gone and the victim stops steering and
-# starts praying" — has been overruled twice by the person playing it. The
-# first pass ran 0.44 / 0.12 / 0.20 and was barely felt; the second ran
-# 0.72 / 0.30 / 0.34 and was still asked to go further. At these values a
-# typical spot leaves a dark car on grey asphalt about a tenth of its
-# contrast — a shape you can find if you are looking straight at it, never
-# one you can read a lane change off — and the knots are, for a moment,
-# effectively opaque.
+#                                                        now      was
+#   * the floor at its thinnest, 0.86 * (1 - 0.16):      0.72     0.64
+#   * the floor at its thickest, 0.86 * (1 + 0.16):      1.00     0.80 (clipped, see _draw_base)
+#   * a thin spot under one halo:                       ~0.77    ~0.70   (23% / 30% left)
+#   * the typical spot, floor + ~2.5 halos + a core:    ~0.93    ~0.86   ( 7% / 14% left)
+#   * the thickest knots:                               ~0.99    ~0.98
+#
+# This has now been raised three times against play, and the file's original
+# caution — that above ~0.85 "the road is simply gone and the victim stops
+# steering and starts praying" — has been overruled every time by the person
+# playing it. The first pass ran 0.44 / 0.12 / 0.20 and was barely felt; the
+# second ran 0.72 / 0.30 / 0.34 and was still asked to go further; this one
+# is the answer to "make it even harder to see, make it denser", and it is
+# aimed at the *thin* spots rather than at the average, because a curtain is
+# only as opaque as the places you can see through. Half of the gain here is
+# not a number at all — it is the clamp in _draw_base that was quietly
+# discarding the thick half of the floor's own drift.
 #
 # What keeps this a skill rather than a coin flip is geometry, not alpha: the
 # band stops 131px short of the car (see CORE_BOTTOM_FRAC), so every vehicle
 # emerges into clear road before it arrives and the victim who was tracking
 # lanes by memory still gets to act on what they see. That is the trade this
-# file makes — take the reading distance, not the reaction. If this ever
-# needs pulling back, BASE_ALPHA is the honest lever: it is the floor, so it
-# sets what the *thinnest* spot costs, and everything else is texture on top
-# of it.
+# file makes — take the reading distance, not the reaction. It is also why
+# there is no more room below the band: CORE_BOTTOM_FRAC and
+# BAND_BOTTOM_FRAC are pinned by Nitro's roof, so density is the only axis
+# this could still move along, and the next ask would have to spend the
+# clear approach.
+#
+# If this ever needs pulling back, BASE_ALPHA is still the honest lever: it
+# is the floor, so it sets what the thinnest spot costs, and everything else
+# is texture on top of it. Pull BASE_VARIATION with it — the two have a
+# ceiling to respect together (see BASE_VARIATION).
 #
 # The unevenness itself is still deliberate, and matters more at these
-# values: a slab of one alpha is a filter, a curtain of varying density is
-# weather, and a thin spot the victim can peer through for a moment is the
-# kind of thing they will remember and try to use. That is now true across
-# the board's width as well as down it — see BASE_VARIATION.
-const BASE_ALPHA := 0.80
+# values, not less: a slab of one alpha is a filter, a curtain of varying
+# density is weather, and a thin spot the victim can peer through for a
+# moment is the kind of thing they will remember and try to use.
+const BASE_ALPHA := 0.86
 # Both puff alphas are PEAK values, at the centre of the puff, falling to
 # zero at its rim (see PUFF_GRADIENT). They are higher than a flat disc would
 # need for the same table above because most of a soft puff's area is below
-# its peak — which is the point of it.
-const PUFF_HALO_ALPHA := 0.32
-const PUFF_CORE_ALPHA := 0.38
+# its peak — which is the point of it: area-weighted, this gradient averages
+# 0.48 of its peak, so a halo is worth ~0.17 where it lands.
+const PUFF_HALO_ALPHA := 0.36
+const PUFF_CORE_ALPHA := 0.44
 
 # A puff is a radial gradient, not a flat disc. draw_circle() gives a hard
 # rim, which at the first pass's 0.12/0.20 was faint enough not to matter and
@@ -277,23 +298,28 @@ const PUFF_SHADE_SPREAD := 0.06 # per-puff +/- on every channel
 
 # Count is picked for coverage arithmetic, not by eye, and it has to be
 # re-run every time the band's extent moves — which is the whole reason this
-# is written down. The band now runs from above the visible road down to
+# is written down. The band runs from above the visible road down to
 # BAND_BOTTOM_FRAC, ~360 x 516px of it on screen ≈ 186,000px²; a mean puff
-# (radius ~60px) is ~11,200px² of halo, so 34 of them cover it ~2.0 times
-# over. A typical point therefore sits under two halos, which is where the
-# 0.86 in the density table comes from.
+# (E[r²] over the radius range, so ~11,800px² of halo) covers it 2.55 times
+# over at 40. A typical point therefore sits under about two and a half
+# halos, which is where the ~0.93 in the density table comes from.
 #
 # The history is the argument for keeping the arithmetic: 14 puffs over the
 # original 87,000px² band was ~1.6x; the same 14 over the taller band would
 # have been ~0.8x, i.e. *thinning* the smoke in the change meant to thicken
 # it. Past ~2.5x the knots stop being knots and the bank flattens into one
-# value, which is the filter look this file exists to avoid — so this sits
-# near the top of the useful range and deliberately not above it.
+# value, which is the filter look this file exists to avoid — so 40 sits at
+# the top of that range and not beyond it, and the density asked for on this
+# pass was bought from the floor and from the puffs' own alpha instead, both
+# of which get denser without getting flatter. The gap between a thin spot
+# (0.77) and a knot (0.99) is wider now than it was at 34, which is the
+# number to watch if this is ever pushed again: when it closes, the bank has
+# become the filter.
 #
-# Cost at 34 is 68 textured quads plus ~75 floor quads per board per frame.
+# Cost at 40 is 80 textured quads plus ~75 floor quads per board per frame.
 # Flat 2D polygons with no overdraw beyond each other; nothing here allocates
 # per frame.
-const PUFF_COUNT := 34
+const PUFF_COUNT := 40
 # Radii as fractions of lane width (~53px on the 5-lane board): a small puff
 # is two thirds of a lane, a big one is over a lane and a half. Sized off
 # the lane rather than the board so a puff is always "about a car and a
@@ -666,8 +692,20 @@ func _draw_base(canvas: CanvasItem, w: float, top: float, feather_top: float, co
 			# it, so it cannot lift the band above its own top edge or below
 			# its own bottom one — at profile 0 the floor is 0 however the
 			# wobble is leaning.
+			#
+			# BASE_ALPHA is inside the clamp, not outside it. Outside, the
+			# clamp bit at profile * wobble = 1.0 — which across the whole
+			# core (profile 1.0) is wobble = 1.0, i.e. the entire thick half
+			# of the drift was flattened off and the floor was BASE_ALPHA
+			# with dents in it and no knots at all. BASE_VARIATION was
+			# therefore a one-sided *thinner*, which is the opposite of what
+			# it is documented to be and made the honest range 0.64-0.80
+			# rather than the 0.64-0.96 the density table claimed. Inside,
+			# the clamp only bites where the floor would actually pass
+			# opaque, and BASE_ALPHA * (1 + BASE_VARIATION) is kept just
+			# under 1.0 so that never happens either.
 			var profile: float = _profile(xs[c], y, top, feather_top, core_bottom, band_bottom)
-			alphas.append(clamp(profile * _wobble(xs[c], y), 0.0, 1.0) * BASE_ALPHA * fade)
+			alphas.append(clamp(profile * _wobble(xs[c], y) * BASE_ALPHA, 0.0, 1.0) * fade)
 
 	var quad := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
 	var cols_v: PackedColorArray = PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE])

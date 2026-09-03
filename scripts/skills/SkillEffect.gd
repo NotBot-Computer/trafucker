@@ -122,6 +122,26 @@ func car_kind() -> Dictionary:
 func car_texture() -> Texture2D:
 	return null
 
+# How big to draw that skin, as a multiple of the footprint. This is the one
+# way to change the *size* of the player's car without changing the car: it
+# scales the Sprite2D only (Car.sprite_scale_mult), so the hitbox, the
+# steering bounds, the dash clamp and what the bot thinks fits in a gap all
+# stay exactly what car_kind() says they are.
+#
+# It is here because replacement art is not obliged to fill its canvas the
+# way the stock art does, and the texture is stretched to the canvas: a
+# cruiser drawn 56px wide inside the sedans' 78x132 canvas, which they fill
+# to 67px, arrives on screen 16% narrower than the car it replaced. That
+# reads as the player shrinking. Use this to put the art back at the size it
+# should look, NOT to make a skill's car genuinely bigger or smaller — a
+# sprite that no longer matches its own hitbox is a lie about where the
+# crashes are, and car_kind() is the honest way to change a footprint.
+#
+# Read off the same effect that won car_texture(), so a skin and the scale it
+# is drawn at can never be resolved from two different skills.
+func car_texture_scale() -> float:
+	return 1.0
+
 # Return true to swallow a crash that would otherwise cost a life. `vehicle`
 # is the Car that was hit — destroy it yourself if that is what should happen
 # to it (board._destroy_vehicle), the caller will not.

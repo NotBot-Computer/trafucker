@@ -138,6 +138,30 @@ const HURRY_TIME_BONUS := 0.7
 # rather than that the player happens to be in a police car.
 const POLICE_TEXTURE := preload("res://sprites/cars/police.png")
 
+# ...and drawn this much bigger than the footprint, which is a correction and
+# not a size change. The texture is stretched to the whole 78x132 canvas, and
+# the cruiser only fills 56px of that width where every player sedan fills
+# 67 — it is a more slender car scaled to the same 121px length. At 1.0 the
+# player therefore visibly *shrinks* the instant the horn goes on, which is
+# what "the police car is small" means and is a costume changing the car.
+#
+# 67 / 56 = 1.196: the cruiser is drawn exactly as wide on screen as the
+# sedan it replaced, which is the one anchor here that is measured rather
+# than chosen (scripts/dev/extract_police.py prints both content boxes). Its
+# length follows to ~1.10x the sedan's, because the art is a longer car and
+# scaling it to match on both axes is not a thing that exists. That extra
+# length is the only cost: the sprite overhangs its own hitbox by ~5px more
+# at each end than a sedan's does, so a near miss at the nose looks fractionally
+# closer than it was — forgiving, never punishing, and the alternative is a
+# cruiser that is visibly narrower than the lane discipline the round is
+# actually judged on.
+#
+# This is Car.sprite_scale_mult, via SkillEffect.car_texture_scale(): the
+# Sprite2D only. The hitbox, steer_bounds(), the dash clamp and BotDriver's
+# sense of what fits all still read car_size(), which has not moved — which
+# is what keeps the paragraph above ("a skin and nothing else") true.
+const CAR_SCALE := 1.196
+
 # Emergency red and blue, kept saturated enough to stay legible as a wash at
 # 10% alpha over grey asphalt.
 const SIREN_RED := Color(1.0, 0.2, 0.24)
@@ -148,24 +172,30 @@ const SIREN_BLUE := Color(0.26, 0.5, 1.0)
 # doesn't turn into a flicker on a small board.
 const FLASH_SPEED := 12.0
 
-# Where the two lamps are drawn on the car, in fractions of the drawn car.
-# These are MEASURED off police.png rather than guessed: its painted light
-# bar sits at 0.504 down the car's own content box (i.e. dead centre once the
-# 78x132 canvas's margins are accounted for) with the blue lens centred
-# 0.137 of the car's width left of the middle. The drawn lamps therefore land
-# on the painted ones and light them up, instead of floating over the roof
-# in front of them, which is where the pre-skin numbers (0.1 up, 0.26 apart)
-# put them.
+# Where the two lamps are drawn on the car, in fractions of the DRAWN SPRITE
+# — car_size() times CAR_SCALE, not car_size() (see _sprite_size). That
+# distinction is the whole reason these numbers are what they are: the lamps
+# have to sit on painted hardware, so they belong to the picture of the car,
+# not to its footprint. Written against the footprint they would have stayed
+# put while the sprite around them grew.
+#
+# They are MEASURED off police.png rather than guessed: its painted light bar
+# sits at 0.504 down the car's own content box — dead centre of the 78x132
+# canvas — with the blue lens centred 0.136 of the canvas width left of the
+# middle. The canvas is what gets stretched to the drawn sprite, so those are
+# already sprite fractions and the drawn lamps land on the painted lenses
+# rather than floating over the roof in front of them (which is where the
+# pre-skin numbers, 0.1 up and 0.26 apart, put them).
 #
 # LAMP_RADIUS_FRAC is deliberately bigger than the painted lens (which is
-# only ~0.058 of the car wide): at a 33px car a true-to-scale lens is under
-# two pixels across and the strobe stops existing. This is the compromise —
-# large enough to read, small enough to sit on the light bar rather than
-# cover the roof. The floor keeps it visible if a skill shrinks the car
-# (Compact takes it to 66% width).
-const LAMP_Y_FRAC := 0.0 # of car height, from the car's centre; +y is down
-const LAMP_SPREAD_FRAC := 0.16 # of car width, each side of centre
-const LAMP_RADIUS_FRAC := 0.13 # of car width
+# only ~0.13 of the canvas wide, i.e. a radius of ~0.065): at a ~40px sprite
+# a true-to-scale lens is under three pixels across and the strobe stops
+# existing. This is the compromise — large enough to read, small enough to
+# sit on the light bar rather than cover the roof. The floor keeps it visible
+# if a skill shrinks the car (Compact takes it to 66% width).
+const LAMP_Y_FRAC := 0.0 # of sprite height, from the sprite's centre; +y is down
+const LAMP_SPREAD_FRAC := 0.136 # of sprite width, each side of centre — the painted lens
+const LAMP_RADIUS_FRAC := 0.13 # of sprite width
 const LAMP_RADIUS_MIN := 2.6 # px
 
 const CHEVRON_SPACING := 44.0 # px between the arrows racing up the corridor
@@ -236,6 +266,10 @@ func deactivate() -> void:
 # car_kind() is left empty on purpose — see POLICE_TEXTURE.
 func car_texture() -> Texture2D:
 	return POLICE_TEXTURE
+
+# Sprite only — see CAR_SCALE. Nothing the round is played on moves.
+func car_texture_scale() -> float:
+	return CAR_SCALE
 
 # --- Clearing the lane -----------------------------------------------------
 
@@ -465,7 +499,10 @@ func draw_overlay() -> void:
 	if canvas == null:
 		return
 
-	var sz: Vector2 = board.car_size()
+	# The DRAWN sprite, not the footprint — the lamps sit on painted hardware
+	# and the beams leave a painted nose, so every number below is measured
+	# against the picture of the car rather than against its hitbox.
+	var sz: Vector2 = _sprite_size()
 	# player_car.position, not the steering position: the beacon is bolted to
 	# the car, so it should ride Nitro's lift and shudder with it.
 	var roof: Vector2 = board.player_car.position + Vector2(0.0, sz.y * LAMP_Y_FRAC)
@@ -486,6 +523,18 @@ func draw_overlay() -> void:
 	var nose_y: float = board.player_car.position.y - sz.y * 0.5
 	_draw_lamp(canvas, roof + Vector2(-spread, 0.0), nose_y, lamp_r, SIREN_BLUE, _lit(PI), fade, sz)
 	_draw_lamp(canvas, roof + Vector2(spread, 0.0), nose_y, lamp_r, SIREN_RED, _lit(0.0), fade, sz)
+
+# The size the cruiser is actually drawn at: the footprint scaled by
+# CAR_SCALE, which is what Car.sprite_scale_mult does to the Sprite2D. Both
+# factors are read live rather than cached, so Compact shrinking the car or
+# Nitro doing nothing at all are both already handled.
+#
+# Everything in draw_overlay() is figured off this and NOT off car_size(),
+# which is the hitbox and is deliberately a different, smaller thing (see
+# CAR_SCALE). draw_board()'s corridor is the other way round — it is a lane
+# being cleared, so it is measured against the road, not against the car.
+func _sprite_size() -> Vector2:
+	return board.car_size() * CAR_SCALE
 
 # One lamp: a beam thrown forward up the road, a soft halo, the lens, and a
 # white-hot center. Kept faint (the beams especially) because this layer sits

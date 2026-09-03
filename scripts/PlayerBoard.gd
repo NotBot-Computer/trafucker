@@ -898,6 +898,12 @@ func start_round() -> void:
 	player_car.body_color = body_color
 	var sz := _car_size(PLAYER_KIND)
 	player_car.set_size(sz.x, sz.y)
+	# Stock size, stock art, drawn at stock scale. _clear_skill_effects()
+	# above has already put the scale back through refresh_car_texture(); this
+	# is the same belt-and-braces the size and the rotation get, and it is
+	# the block that is allowed to name the stock values because nothing is
+	# live by the time it runs.
+	player_car.set_sprite_scale_mult(1.0)
 	if player_texture != null:
 		player_car.set_texture(player_texture)
 	player_car.rotation = 0.0
@@ -1259,12 +1265,25 @@ func _effect_car_kind() -> Dictionary:
 			return kind
 	return {}
 
-func _effect_car_texture() -> Texture2D:
+# The skin the player's car should be wearing right now AND the scale it is
+# drawn at, resolved together in one pass. Together on purpose: the scale
+# only ever makes sense against the texture it belongs to (see
+# SkillEffect.car_texture_scale), and two functions walking active_effects
+# separately is the duplication trap §7 records — the moment their precedence
+# disagreed, a skill's cruiser would be drawn at the tank's scale, or the
+# player's own sedan at the cruiser's.
+#
+# Precedence is exactly _current_kind()'s and for the same reason: the tank
+# outranks everything, then the first modular skill that claims a skin, then
+# the player's own chosen sprite.
+func _current_player_skin() -> Dictionary:
+	if tank_mode_active:
+		return {"texture": TANK_TEXTURE, "scale": 1.0}
 	for effect in active_effects:
 		var tex: Texture2D = effect.car_texture()
 		if tex != null:
-			return tex
-	return null
+			return {"texture": tex, "scale": float(effect.car_texture_scale())}
+	return {"texture": player_texture, "scale": 1.0}
 
 func _effect_absorbs_crash(vehicle) -> bool:
 	for effect in active_effects:
@@ -2216,17 +2235,10 @@ func _current_kind() -> Dictionary:
 		return from_effect
 	return PLAYER_KIND
 
-# Whichever texture the player's car should be wearing right now, on exactly
-# the precedence _current_kind() uses and for the same reason: the tank
-# outranks everything, then the first modular skill that claims a skin (see
-# SkillEffect.car_texture), then the player's own chosen sprite.
+# Whichever texture the player's car should be wearing right now — see
+# _current_player_skin, which decides it (and the scale it is drawn at).
 func _current_player_texture() -> Texture2D:
-	if tank_mode_active:
-		return TANK_TEXTURE
-	var from_effect := _effect_car_texture()
-	if from_effect != null:
-		return from_effect
-	return player_texture
+	return _current_player_skin()["texture"]
 
 # The texture half of refresh_car_size(), and it exists for the same reason:
 # with two systems able to re-skin the car, neither end of either one can
@@ -2234,7 +2246,11 @@ func _current_player_texture() -> Texture2D:
 # other is still live — a tank ending mid-Make-Way would otherwise drop the
 # player out of the police car they are still driving.
 func refresh_car_texture() -> void:
-	var tex := _current_player_texture()
+	var skin := _current_player_skin()
+	# Before the texture, so a skin never lands at the previous skin's scale
+	# for a frame.
+	player_car.set_sprite_scale_mult(float(skin["scale"]))
+	var tex: Texture2D = skin["texture"]
 	if tex != null:
 		player_car.set_texture(tex)
 

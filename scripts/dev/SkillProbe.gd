@@ -143,6 +143,13 @@ func _snapshot() -> Dictionary:
 		# in a form the child-node count cannot see — nothing leaks, the
 		# player is just permanently in someone else's car.
 		"texture": board.player_car.sprite.texture,
+		# ...and how big that skin is drawn (SkillEffect.car_texture_scale).
+		# Separate from car_w/car_h on purpose: this one deliberately does
+		# NOT move the footprint, so a scale left behind is invisible to
+		# every other line in this snapshot — the player would simply be
+		# permanently the wrong size on screen while every number the round
+		# is played on still read correct.
+		"sprite_scale": board.player_car.sprite_scale_mult,
 		"steer": board.steer_top_speed(),
 		"speed_mult": board._effect_speed_mult(),
 		"steer_mult": board._effect_steer_mult(),
@@ -209,6 +216,8 @@ func _run_case(skill_id: String, label: String, cut_at: float, restart: bool) ->
 		notes.append("steer top speed left at %.1f, was %.1f" % [after["steer"], before["steer"]])
 	if after["texture"] != before["texture"]:
 		notes.append("car skin left as %s" % [after["texture"]])
+	if abs(float(after["sprite_scale"]) - float(before["sprite_scale"])) > 0.0001:
+		notes.append("car sprite left drawn at %.3fx, was %.3fx" % [after["sprite_scale"], before["sprite_scale"]])
 	if int(board.lives) > int(consts["MAX_LIVES"]) or int(board.lives) < 0:
 		notes.append("lives out of range at %d" % board.lives)
 	# Only judged on the uninterrupted run: the cut cases exist to test the

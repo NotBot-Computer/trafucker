@@ -15,6 +15,20 @@ class_name Car
 var width: float = 32.0
 var height: float = 54.0
 
+# Draws the texture bigger or smaller than the footprint, without touching
+# the footprint. width/height are the car's real size — the hitbox, the
+# steering bounds, what the bot thinks fits in a gap — and nothing here may
+# move them; this only scales the Sprite2D on top of them.
+#
+# It exists because a skill can re-skin the player's car (SkillEffect.
+# car_texture) and the replacement art is not obliged to fill its canvas the
+# same way the stock art does. Make Way's cruiser is drawn 56px wide inside
+# the same 78x132 canvas the sedans fill to 67px, so at 1.0 the player
+# visibly shrinks the moment the skin lands — a size change nobody asked for,
+# out of a costume. Scaling the sprite is the correction that leaves every
+# number the round is played on exactly where it was.
+var sprite_scale_mult: float = 1.0
+
 # Turn signal: two small lamps built procedurally (no scene/art changes
 # needed) so any Car — placeholder shape or real cropped-photo texture alike
 # — can show a blinking indicator before a lane change. `indicator_side`
@@ -36,6 +50,10 @@ func set_size(w: float, h: float) -> void:
 
 func set_texture(tex: Texture2D) -> void:
 	sprite.texture = tex
+	_rebuild()
+
+func set_sprite_scale_mult(m: float) -> void:
+	sprite_scale_mult = m
 	_rebuild()
 
 func start_indicator(side: int) -> void:
@@ -104,7 +122,7 @@ func _rebuild() -> void:
 		windshield.visible = false
 		var tex_size: Vector2 = sprite.texture.get_size()
 		if tex_size.x > 0.0 and tex_size.y > 0.0:
-			sprite.scale = Vector2(width / tex_size.x, height / tex_size.y)
+			sprite.scale = Vector2(width / tex_size.x, height / tex_size.y) * sprite_scale_mult
 		return
 
 	body.visible = true
