@@ -138,6 +138,11 @@ func _snapshot() -> Dictionary:
 		"children": board.get_child_count(),
 		"car_w": board.car_size().x,
 		"car_h": board.car_size().y,
+		# The skin. A skill can re-clothe the player's car (SkillEffect.
+		# car_texture), and a skin left behind is the session-G class of bug
+		# in a form the child-node count cannot see — nothing leaks, the
+		# player is just permanently in someone else's car.
+		"texture": board.player_car.sprite.texture,
 		"steer": board.steer_top_speed(),
 		"speed_mult": board._effect_speed_mult(),
 		"steer_mult": board._effect_steer_mult(),
@@ -202,6 +207,8 @@ func _run_case(skill_id: String, label: String, cut_at: float, restart: bool) ->
 		notes.append("car left at %.1fx%.1f, was %.1fx%.1f" % [after["car_w"], after["car_h"], before["car_w"], before["car_h"]])
 	if abs(float(after["steer"]) - float(before["steer"])) > 0.01:
 		notes.append("steer top speed left at %.1f, was %.1f" % [after["steer"], before["steer"]])
+	if after["texture"] != before["texture"]:
+		notes.append("car skin left as %s" % [after["texture"]])
 	if int(board.lives) > int(consts["MAX_LIVES"]) or int(board.lives) < 0:
 		notes.append("lives out of range at %d" % board.lives)
 	# Only judged on the uninterrupted run: the cut cases exist to test the

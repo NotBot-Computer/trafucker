@@ -56,11 +56,13 @@ A prompt that has produced usable results for this style, adjust the subject:
 
 ## Make Way (`siren`, self) — `SirenSkill.gd`
 
-**What the code draws today, all procedural:** a red/blue light bar on the
-car's roof strobing out of phase (two lamps with beams thrown up the road), a
-translucent corridor painted up the player's lane with chevrons racing along
-it, and traffic being handed to the existing lane-change machine to pull
-aside.
+**Car skin — DONE (session Z).** The player drives a real police cruiser for
+the duration: `sprites/cars/police.png`, cut from the user's `polis.png` by
+`scripts/dev/extract_police.py` onto the player-car canvas (78x132), wired up
+through the `SkillEffect.car_texture()` hook. Re-running the extractor
+regenerates it. The skill deliberately does not claim `car_kind()`, so the
+art had to be fitted to `PLAYER_KIND`'s aspect rather than the reverse — see
+that script's header.
 
 **Icon** — `sprites/skills/icon_siren.png`: a police beacon / roof light bar,
 red and blue, throwing two short beams. Avoid a plain red dome (it disappears
@@ -71,7 +73,11 @@ roof bar with a red lamp on the left and a blue lamp on the right: frames
 alternate red-lit / both-dim / blue-lit / both-dim / red-lit / blue-lit, so a
 6-frame loop at ~12fps strobes. `SirenSkill._draw_lamp()` is the thing this
 replaces; it would be scaled to `car_size().x * 0.6` wide and positioned at
-`player_car.position + (0, -car_h * 0.1)`.
+`player_car.position + (0, car_h * LAMP_Y_FRAC)` — which is the car's centre,
+because that is where `police.png`'s own painted light bar sits (measured;
+see the `LAMP_*` block in `SirenSkill.gd`). Note the drawn lamps now land ON
+the cruiser's painted bar rather than in front of it, so a replacement sheet
+has to line up with that art, not float over the bonnet.
 
 **Sheet 2, optional, a corridor chevron** — 1 cell, 24x12, a single ">" arrow
 pointing up (nose -y), white with a 1px outline, transparent. Used as a tile
@@ -184,25 +190,31 @@ chevron strip to replace the procedural band in `draw_overlay()`.
 
 ## Oil Slick (`slick`, opponent) — `SlickSkill.gd`
 
-**What the code draws today:** nine irregular dark puddles on lane centres,
-streaked 1.5x along the direction of travel, each with a smaller rainbow-sheen
-patch whose hue crawls, a wet glint along the upper edge, scrolling down with
-the board's own odometer; plus two tapered tyre smears behind the car that
-kick sideways with the slide.
+**What the code draws today:** nine puddle *sprites* on lane centres, dealt
+from the eight in `sprites/skills/oil_1..8.png`, each randomly tilted (±0.30
+rad) and sometimes mirrored, drawn at full opacity under the traffic and
+scrolling down with the board's own odometer; plus two tapered tyre smears
+behind the car that kick sideways with the slide. The puddle half of this
+brief is **done** — see below.
 
 **Icon** — `sprites/skills/icon_slick.png`: a black puddle with a pale sheen
 highlight and two falling drips (the placeholder). Keep the puddle near-black
 with a blue-white highlight so it reads on red.
 
-**Sheet 1, puddles** — 4 cells, each 64x96 (taller than wide — the streak is
-along travel, i.e. vertical), transparent: four differently-shaped dark spills
-with a soft rainbow film patch offset toward the top-left of each and a thin
-light rim along the *top* edge. `SlickSkill._draw_spills()` would pick one per
-puddle instead of generating a polygon, and scale it to `lane_width ×
-[0.45..1.05]`.
+**Sheet 1, puddles — DONE (session Z).** The user supplied a 1536x1024 sheet
+of eight rainbow-sheened spills (`~/Documents/yag.png`);
+`scripts/dev/extract_oil.py` segments it and writes `sprites/skills/oil_1.png`
+through `oil_8.png`, each cropped to its own content and capped at 256px on
+its long edge. `SlickSkill._draw_spills()` draws them directly, scaled to
+`lane_width × [1.0..2.15]` with the height coming from each texture's own
+aspect ratio. Re-running the extractor regenerates them; nothing else needs
+touching. Note the original brief asked for cells taller than wide, and the
+delivered art is mostly the opposite — that is why `SPILL_STRETCH_Y` dropped
+to 1.15 and the sizing is by width rather than by radius.
 
-**Sheet 2, optional, the sheen** — 1 cell, 32x32, a tileable rainbow-oil
-texture, low contrast, to be additive-blended over the puddles.
+**Sheet 2, the sheen — no longer wanted.** It was a way to get a rainbow film
+onto flat procedural polygons. The delivered puddles have the film painted
+in, at a quality no additive overlay was going to reach.
 
 ---
 

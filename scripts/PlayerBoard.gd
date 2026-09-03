@@ -1259,6 +1259,13 @@ func _effect_car_kind() -> Dictionary:
 			return kind
 	return {}
 
+func _effect_car_texture() -> Texture2D:
+	for effect in active_effects:
+		var tex: Texture2D = effect.car_texture()
+		if tex != null:
+			return tex
+	return null
+
 func _effect_absorbs_crash(vehicle) -> bool:
 	for effect in active_effects:
 		if effect.absorbs_crash(vehicle):
@@ -1288,7 +1295,9 @@ func _activate_tank_mode() -> void:
 	tank_mode_timer = TANK_MODE_DURATION
 	var sz := _car_size(TANK_KIND)
 	player_car.set_size(sz.x, sz.y)
-	player_car.set_texture(TANK_TEXTURE)
+	# tank_mode_active is already true, so this resolves to TANK_TEXTURE —
+	# named here only by the precedence in _current_player_texture().
+	refresh_car_texture()
 
 func _deactivate_tank_mode() -> void:
 	tank_mode_active = false
@@ -1305,8 +1314,9 @@ func _deactivate_tank_mode() -> void:
 		fire_effect_sprite.queue_free()
 	fire_effect_sprite = null
 	refresh_car_size()
-	if player_texture != null:
-		player_car.set_texture(player_texture)
+	# NOT player_texture directly: a skill may have claimed a skin while the
+	# tank was up, and it is still live.
+	refresh_car_texture()
 
 func _muzzle_position() -> Vector2:
 	return player_car.position + Vector2(0.0, -_car_size(TANK_KIND).y * 0.5)
@@ -2205,6 +2215,28 @@ func _current_kind() -> Dictionary:
 	if not from_effect.is_empty():
 		return from_effect
 	return PLAYER_KIND
+
+# Whichever texture the player's car should be wearing right now, on exactly
+# the precedence _current_kind() uses and for the same reason: the tank
+# outranks everything, then the first modular skill that claims a skin (see
+# SkillEffect.car_texture), then the player's own chosen sprite.
+func _current_player_texture() -> Texture2D:
+	if tank_mode_active:
+		return TANK_TEXTURE
+	var from_effect := _effect_car_texture()
+	if from_effect != null:
+		return from_effect
+	return player_texture
+
+# The texture half of refresh_car_size(), and it exists for the same reason:
+# with two systems able to re-skin the car, neither end of either one can
+# hardcode "put it back to player_texture" without being wrong whenever the
+# other is still live — a tank ending mid-Make-Way would otherwise drop the
+# player out of the police car they are still driving.
+func refresh_car_texture() -> void:
+	var tex := _current_player_texture()
+	if tex != null:
+		player_car.set_texture(tex)
 
 # Puts the car sprite's drawn size back in step with whatever _current_kind()
 # now says. Tank Mode used to spell this out at both ends of its transform;

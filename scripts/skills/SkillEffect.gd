@@ -108,6 +108,20 @@ func grip_mult() -> float:
 func car_kind() -> Dictionary:
 	return {}
 
+# Return a Texture2D to re-skin the player's car for the duration. Like
+# car_kind() the first live effect that claims one wins, and Tank Mode
+# outranks all of them. Call board.refresh_car_texture() from
+# activate()/deactivate() so the sprite changes the moment the claim does.
+#
+# This is a SKIN, not a size: the texture is stretched to whatever
+# car_size() currently says (Car._rebuild scales each axis independently),
+# so a texture at any aspect but the one car_kind() implies will look
+# squashed. Authoring the art to fit the existing footprint is the cheap
+# side of that trade; claiming car_kind() as well is the expensive one,
+# because it changes the hitbox.
+func car_texture() -> Texture2D:
+	return null
+
 # Return true to swallow a crash that would otherwise cost a life. `vehicle`
 # is the Car that was hit — destroy it yourself if that is what should happen
 # to it (board._destroy_vehicle), the caller will not.

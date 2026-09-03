@@ -7,8 +7,8 @@ extends SkillEffect
 ## takes the victim's grip. Both change what the world *does*. This one
 ## changes what the victim can *see*:
 ## a bank of smoke rolls across the upper part of their board, traffic
-## emerges from it far later than usual, and every gap has to be read in
-## about half the time it normally gets. The road underneath is exactly as
+## emerges from it very late, and every gap has to be read in roughly a
+## quarter of the road it normally gets. The road underneath is exactly as
 ## fast and exactly as crowded as it was a second ago; the car steers exactly
 ## as it did. The danger is only that the victim now finds out about each car
 ## late — and the restraint is the design: it is the one skill in the game
@@ -75,90 +75,187 @@ const FADE_OUT := 0.7
 # --- Where the band sits -----------------------------------------------------
 #
 # Three hard constraints, in order of how badly it goes if one is broken:
-#  1. It must not cover the HUD strip at the top. The overlay draws ABOVE
+#  1. The HUD strip at the top must stay READABLE. The overlay draws ABOVE
 #     PlayerBoard._draw() (SkillOverlay.OVERLAY_Z, above even Nitro's
-#     energy), so it would paint straight over the boost bar and every timer
+#     energy), so it paints straight over the boost bar and every timer
 #     stacked under it. A player who cannot see their own boost charge will
 #     think the game broke, not that they were attacked.
 #  2. It must not cover the player's own car near the bottom. Taking away the
 #     thing they steer reads as a rendering bug.
 #  3. It must be dense enough to matter and thin enough to survive — see the
 #     density block below.
-
-# Clear pixels kept between the *bottom* of the boost bar and the first
-# wisp. The bar's own position is read live off the board
-# (BOOST_BAR_MARGIN_TOP + BOOST_BAR_HEIGHT, see _band_top) so the smoke
-# follows the HUD if it ever moves; this reserve is for what stacks UNDER
-# the bar, which _draw() decides frame by frame and this file cannot know:
-# the tank timer (4 + 6), the nitro timer (4 + 6), and one 4 + 6 skill bar
-# per live modular effect. Tank + Nitro + three skill bars is 50px, which is
-# already more than any real round stacks; 56 leaves that a little room, and
-# the top feather (below) is thin for its first TOP_FEATHER_PX anyway. The
-# "BOT · NORMAL" tag (BOT_TAG_Y 49) sits inside this reserve too.
 #
-# A consequence worth knowing: the strip above the band is clear road, and
-# the camera can see above y = 0 by vertical_margin besides, so a car
-# entering at the top (_spawn_obstacle puts it at -car height - 40) is
-# visible for its first ~120px of travel — a glimpse of a quarter second
-# at mid-round speed — before the smoke swallows it. That is accepted, and
-# arguably better than a band that starts at the very top edge: the victim
-# is shown which lane each car is in and then made to *remember* it, which
-# is a harder and more interesting thing to fail at than never having seen
-# it. Covering that strip would also mean painting over the HUD, which is
-# constraint 1 above and not negotiable.
-const HUD_CLEAR_RESERVE := 56.0
+# Constraint 1 used to be met by starting the band BELOW the HUD, leaving the
+# strip completely clear. That was wrong, and playing it is what showed why:
+# the camera sees above y = 0 by vertical_margin (up to ~107px at the
+# 4-player zoom), so the band had clear road above it and clear road below
+# it, four straight edges, and read as a grey slab parked on the road rather
+# than as weather. It is now met by thinning the smoke over that strip
+# instead — see HUD_VEIL_ALPHA. The band runs off the top of the visible road
+# and the top edge is gone.
 
-# The band's top edge is feathered too, over this many px, so it does not
-# start on a hard line under the HUD. Short, because the strip above it is
-# busy with bars and a soft edge is all that is needed to stop it looking
-# like a panel.
+# How far ABOVE the top of the visible road the band begins, in px. It exists
+# so the top feather finishes before the first pixel anyone can see: the band
+# is at full density everywhere on screen and simply has no top edge. The
+# visible top is -vertical_margin, which changes with the player count, so
+# this is measured from there rather than from y = 0.
+const BAND_TOP_OVERSHOOT := 44.0
+
+# The top feather, over this many px — entirely inside the overshoot above,
+# so it is never on screen. It is kept because the roll-in (see _reach)
+# lerps the band's bottom edges up toward the top edge, and a band caught
+# mid-roll with a hard top would flash one.
 const TOP_FEATHER_PX := 28.0
+
+# The HUD strip is veiled, not skipped: over the bars the band's density is
+# multiplied down to HUD_VEIL_ALPHA, ramped in and out at every edge so it
+# reads as a thin patch of smoke rather than a rectangular hole. At 0.52 the
+# smoke over the boost bar comes to ~0.42 alpha. A saturated bar on a black
+# outline keeps well over half its contrast through that and stays perfectly
+# legible; a grey car passing through the same patch does not. 0.26 and 0.40
+# were both tried and both left the window a peephole traffic read through —
+# this is the thickest the bars will take.
+#
+# **The veil is a WINDOW, not a stripe.** A full-width thin band was tried
+# first and it is worse than the hole it replaced: it spans every lane, so
+# traffic scrolling down through it lights up for ~50px and then vanishes
+# again, which reads as the smoke flickering rather than as smoke. The bars
+# only occupy the middle BOOST_BAR_WIDTH_FRAC (0.5) of the board, so the
+# window is that wide plus HUD_VEIL_SIDE_PAD, centred — the outer lanes stay
+# at full density, and the middle ones give up a short stretch of road that
+# happens to be where the player's own readouts are.
+#
+# Its bottom is the boost bar's own position (read live off the board, see
+# _resolve_hud) plus HUD_VEIL_RESERVE, which covers what stacks UNDER the bar
+# and which this file cannot know frame by frame: the tank timer (4 + 6), the
+# nitro timer (4 + 6), and one 4 + 6 skill bar per live modular effect. Tank
+# + Nitro + three skill bars is 50px, more than any real round stacks; 56
+# leaves room. The "BOT · NORMAL" tag (BOT_TAG_Y 49) sits inside it too. The
+# top is a few px above y = 0 so the veil covers the bar's own margin without
+# eating into the road above the board.
+const HUD_VEIL_RESERVE := 56.0
+const HUD_VEIL_TOP := -6.0
+const HUD_VEIL_ALPHA := 0.52
+const HUD_VEIL_FADE := 16.0 # px of ramp at the top and bottom edges
+const HUD_VEIL_SIDE_PAD := 16.0 # px each side of the bars the window also covers
+const HUD_VEIL_SIDE_FADE := 26.0 # px of ramp at the left and right edges
 
 # Fractions of board_height. The core (full density) runs from the HUD strip
 # down to CORE_BOTTOM_FRAC; below that it feathers out to nothing at
-# BAND_BOTTOM_FRAC. On the 620px board that is a core ending at 236px and
-# clear road from 322px. The player's car roof sits at ~540px
-# (board_height - CAR_BOTTOM_MARGIN - car height), so the victim gets ~218px
-# of clear approach instead of the ~540 they are used to — 40% of it — plus
-# the 86px feather where a car is half-legible and the faint silhouettes
-# inside the core. Call that "read in half the time", which is the brief.
-# The car itself stays clear by a wide margin in every state: Tank Mode's
-# taller roof is at ~513px, and Nitro lifts the car 105px to ~435px, still
-# 113px under the band — and while airborne the victim is not reading gaps
-# anyway. Lowering BAND_BOTTOM_FRAC past ~0.6 starts closing on the nitro
-# roof; raising CORE_BOTTOM_FRAC past ~0.45 leaves less than a car length of
-# clear road per lane change and stops being fair.
-const CORE_BOTTOM_FRAC := 0.38
-const BAND_BOTTOM_FRAC := 0.52
+# BAND_BOTTOM_FRAC. On the 620px board that is a core ending at 310px and
+# clear road from 409px. The player's car roof sits at ~540px
+# (board_height - CAR_BOTTOM_MARGIN - car height), so the victim gets ~131px
+# of clear approach instead of the ~540 they are used to — under a quarter of
+# it, about a third of a second at mid-round road speed — plus the 99px
+# feather where a car is a half-legible smudge.
+#
+# These were 0.38/0.52 on the first pass, which left 218px of clear road and
+# played as an inconvenience rather than a blindfold. The brief then was
+# "read in half the time"; the ask after playing it was for smoke you
+# genuinely cannot see through, and reading distance is half of that (density
+# below is the other half). Cutting the approach is what makes the victim
+# commit to a lane on memory instead of on sight.
+#
+# The band's bottom edge is the one number here with a hard ceiling, and it
+# is the player's own car rather than fairness: Nitro lifts the car 105px, to
+# a roof at ~435px, and BAND_BOTTOM_FRAC * 620 = 409 clears that by 26px. Any
+# further down and a nitro-boosting victim is inside their own smoke, which
+# reads as a bug rather than as weather. Tank Mode's taller roof (~513px) and
+# the ordinary car both sit far below it.
+const CORE_BOTTOM_FRAC := 0.50
+const BAND_BOTTOM_FRAC := 0.66
 
-# The bottom feather is drawn as this many stacked gradient slices rather
-# than one (ScreenMask's technique, split). A single linear ramp meets the
-# clear road on a visible crease — it is the change in slope the eye
-# catches, not the value — and three slices sampled off smoothstep bend it
-# into a curve at the cost of two extra polygons.
-const FEATHER_STEPS := 3
+# The band's floor is drawn as a BASE_ROWS x BASE_COLS grid of quads with
+# per-vertex alpha, rather than the five full-width gradient slices it used
+# to be. Two reasons, both learned from looking at it:
+#
+#   * The old five slices could only vary down the board, so the floor was a
+#     constant value across the full 360px width at any given height. That is
+#     the definition of a slab, and no amount of puffs on top of it hides
+#     that the thing underneath them is rectangular. The grid samples a
+#     drifting 2D function (see _wobble) at every corner, so the floor is
+#     never the same twice across a row.
+#   * The veil over the HUD strip is a shape the five fixed slices could not
+#     express at all.
+#
+# 16 x 5 is 80 quads per board per frame. That is more than five and still
+# nothing: they are flat polygons with no texture and no overdraw beyond
+# each other. Fewer rows and the vertical gradient starts showing its facets
+# where the profile curves hardest (the bottom feather); fewer columns and
+# the wobble reads as vertical stripes rather than as drift.
+const BASE_ROWS := 16
+const BASE_COLS := 5
+
+# How far the floor's density wanders either side of BASE_ALPHA, as a
+# fraction of it, and how fast. Two sine components at an awkward ratio in
+# both axes (the same trick Oil Slick's fishtail uses, for the same reason: a
+# single one is a pattern the eye locks onto). 0.20 is as far as this goes:
+# the floor is the thing that is true everywhere, the puffs are what should
+# carry the big variation, and much past this the thin spots start reading as
+# holes rather than as thin spots.
+const BASE_VARIATION := 0.20
+const WOBBLE_X_SCALE := 0.0091 # rad/px across the board
+const WOBBLE_Y_SCALE := 0.0063 # rad/px down it
+const WOBBLE_DRIFT := 0.27 # rad/s — the whole field creeps, so it never sets
 
 # --- Density ----------------------------------------------------------------
 #
-# Partial occlusion, not a blindfold. Alpha composes as 1 - Π(1 - a), so the
-# numbers below are chosen for what they add up to, not for what each is:
-#   * BASE_ALPHA alone (the thinnest spot, between puffs):        0.44
-#   * base + one puff halo (the typical spot):                    ~0.51
-#   * base + halo + core (a puff centred on you):                 ~0.61
-#   * base + three halos + two cores (the thickest knot):         ~0.76
-# At 0.76 a dark car on grey asphalt keeps about a quarter of its contrast:
-# enough to know *something* is in that lane, not enough to see whether its
-# indicator is lit or which way it is sliding — which is exactly the
-# information this skill exists to take. Above ~0.85 the road is simply gone
-# and the victim stops steering and starts praying, which is not a skill,
-# it is a coin flip; below ~0.5 everywhere, cars read through it fine and
-# the skill is not felt at all. The unevenness itself is deliberate: a slab
-# of one alpha is a filter, a curtain of varying density is weather, and a
-# thin spot the victim can peer through for a moment is the kind of thing
-# they will remember and try to use.
-const BASE_ALPHA := 0.44
-const PUFF_HALO_ALPHA := 0.12
-const PUFF_CORE_ALPHA := 0.20
+# Alpha composes as 1 - Π(1 - a), so the numbers below are chosen for what
+# they add up to, not for what each is:
+#   * the floor at its thinnest (BASE_ALPHA * (1 - BASE_VARIATION)):  0.64
+#   * the floor at its thickest:                                      0.96
+#   * floor + two puff edges (the typical spot at PUFF_COUNT 34):     ~0.86
+#   * floor + halo + core at a puff's centre:                         ~0.92
+#   * floor + three halos + two cores (the thickest knot):            ~0.98
+#
+# This has been raised twice against play, and the file's original caution —
+# that above ~0.85 "the road is simply gone and the victim stops steering and
+# starts praying" — has been overruled twice by the person playing it. The
+# first pass ran 0.44 / 0.12 / 0.20 and was barely felt; the second ran
+# 0.72 / 0.30 / 0.34 and was still asked to go further. At these values a
+# typical spot leaves a dark car on grey asphalt about a tenth of its
+# contrast — a shape you can find if you are looking straight at it, never
+# one you can read a lane change off — and the knots are, for a moment,
+# effectively opaque.
+#
+# What keeps this a skill rather than a coin flip is geometry, not alpha: the
+# band stops 131px short of the car (see CORE_BOTTOM_FRAC), so every vehicle
+# emerges into clear road before it arrives and the victim who was tracking
+# lanes by memory still gets to act on what they see. That is the trade this
+# file makes — take the reading distance, not the reaction. If this ever
+# needs pulling back, BASE_ALPHA is the honest lever: it is the floor, so it
+# sets what the *thinnest* spot costs, and everything else is texture on top
+# of it.
+#
+# The unevenness itself is still deliberate, and matters more at these
+# values: a slab of one alpha is a filter, a curtain of varying density is
+# weather, and a thin spot the victim can peer through for a moment is the
+# kind of thing they will remember and try to use. That is now true across
+# the board's width as well as down it — see BASE_VARIATION.
+const BASE_ALPHA := 0.80
+# Both puff alphas are PEAK values, at the centre of the puff, falling to
+# zero at its rim (see PUFF_GRADIENT). They are higher than a flat disc would
+# need for the same table above because most of a soft puff's area is below
+# its peak — which is the point of it.
+const PUFF_HALO_ALPHA := 0.32
+const PUFF_CORE_ALPHA := 0.38
+
+# A puff is a radial gradient, not a flat disc. draw_circle() gives a hard
+# rim, which at the first pass's 0.12/0.20 was faint enough not to matter and
+# at these alphas is not: 22 legible circles read as a raft of soap bubbles,
+# which is a worse look than the thin smoke this change was made to replace.
+# One shared GradientTexture2D drawn as a rect costs exactly what draw_circle
+# did (one call) and has no edge at all.
+#
+# The gradient is not linear. It holds near-full alpha out to PUFF_PLATEAU of
+# the radius and only then falls away, so a puff still has a solid middle to
+# hide a car behind — a pure linear falloff averages a third of its peak and
+# turns the whole bank into haze. Sizes: 96px is far more resolution than a
+# ~60px-radius puff drawn at ~1x zoom needs, and the texture is built once
+# for the whole game.
+const PUFF_TEX_SIZE := 96
+const PUFF_PLATEAU := 0.45
+const PUFF_PLATEAU_ALPHA := 0.86
 
 # A light, slightly warm grey — smoke, not fog. The road texture under it is
 # a mid grey, so the band has to be *lighter* than the asphalt to read as a
@@ -178,25 +275,32 @@ const PUFF_SHADE_SPREAD := 0.06 # per-puff +/- on every channel
 # hanging over the road and the road is coming at the player — rather than
 # being a filter stuck to the glass.
 
-# Count is picked for coverage arithmetic, not by eye, since this file could
-# not be run while it was written. The band is ~360 x 243px ≈ 87,000px²; a
-# mean puff (radius ~56px) is ~9,900px² of halo, so 14 of them cover the band
-# ~1.6 times over. That puts a typical point under one or two halos and
-# leaves real gaps between them, which is the varying density described
-# above. At 8 the coverage drops under 1.0 and the base slab shows through
-# everywhere; at 24 it passes 2.5 and tiles into a uniform sheet for twice
-# the draw calls. Cost at 14
-# is 28 draw_circle calls plus 5 polygons per board per frame — 132 calls
-# across four boards, the same ballpark as Oil Slick's spill field, and
-# nothing here allocates per frame.
-const PUFF_COUNT := 14
+# Count is picked for coverage arithmetic, not by eye, and it has to be
+# re-run every time the band's extent moves — which is the whole reason this
+# is written down. The band now runs from above the visible road down to
+# BAND_BOTTOM_FRAC, ~360 x 516px of it on screen ≈ 186,000px²; a mean puff
+# (radius ~60px) is ~11,200px² of halo, so 34 of them cover it ~2.0 times
+# over. A typical point therefore sits under two halos, which is where the
+# 0.86 in the density table comes from.
+#
+# The history is the argument for keeping the arithmetic: 14 puffs over the
+# original 87,000px² band was ~1.6x; the same 14 over the taller band would
+# have been ~0.8x, i.e. *thinning* the smoke in the change meant to thicken
+# it. Past ~2.5x the knots stop being knots and the bank flattens into one
+# value, which is the filter look this file exists to avoid — so this sits
+# near the top of the useful range and deliberately not above it.
+#
+# Cost at 34 is 68 textured quads plus ~75 floor quads per board per frame.
+# Flat 2D polygons with no overdraw beyond each other; nothing here allocates
+# per frame.
+const PUFF_COUNT := 34
 # Radii as fractions of lane width (~53px on the 5-lane board): a small puff
-# is two thirds of a lane, a big one is nearly a lane and a half. Sized off
+# is two thirds of a lane, a big one is over a lane and a half. Sized off
 # the lane rather than the board so a puff is always "about a car and a
 # bit" — enough to hide one car, never enough to hide a whole row, whatever
 # the lane count.
 const PUFF_RADIUS_MIN_FRAC := 0.65
-const PUFF_RADIUS_MAX_FRAC := 1.45
+const PUFF_RADIUS_MAX_FRAC := 1.60
 const PUFF_CORE_FRAC := 0.62 # the denser inner circle, as a fraction of the halo
 # Each puff scrolls at its own multiple of the road rate, spread about 1.0.
 # That spread IS the internal motion: at a mid-round road speed of ~400px/s
@@ -239,10 +343,12 @@ const BAR := Color(0.80, 0.78, 0.74, 0.95)
 var _scroll: float = 0.0
 var _last_distance: float = 0.0
 
-# Bottom edge of the boost bar in board px, resolved once in activate() —
-# see _resolve_hud_bottom for how and why it is not simply
-# board.BOOST_BAR_MARGIN_TOP.
+# The HUD's geometry in board px, resolved once in activate(): the bottom
+# edge of the boost bar, and half the width of the veil window over the bars.
+# See _resolve_hud for how and why they are not simply
+# board.BOOST_BAR_MARGIN_TOP and friends.
 var _hud_bottom: float = 0.0
+var _veil_half_w: float = 0.0
 
 # Seconds since activate(), NOT derived from time_left. refresh() puts
 # time_left back to DURATION when the skill is re-applied mid-effect, and a
@@ -269,7 +375,7 @@ func duration() -> float:
 
 func activate() -> void:
 	_last_distance = board.distance
-	_hud_bottom = _resolve_hud_bottom()
+	_resolve_hud()
 	_build_puffs()
 
 func refresh() -> void:
@@ -356,10 +462,50 @@ func _envelope() -> float:
 func _reach() -> float:
 	return smoothstep(0.0, 1.0, clamp(_age / FADE_IN, 0.0, 1.0))
 
-# Top edge of the band: just under whatever the HUD stacks below the boost
-# bar.
+# Top edge of the band, above the top of what the camera can see — so the
+# band has no visible top edge at all. See BAND_TOP_OVERSHOOT.
 func _band_top() -> float:
-	return _hud_bottom + HUD_CLEAR_RESERVE
+	return -(float(board.vertical_margin) + BAND_TOP_OVERSHOOT)
+
+# Bottom of the strip the HUD_VEIL_ALPHA thinning covers.
+func _veil_bottom() -> float:
+	return _hud_bottom + HUD_VEIL_RESERVE
+
+# 1.0 everywhere except inside the window over the HUD bars, where it falls
+# to HUD_VEIL_ALPHA with a smooth ramp on all four edges. Multiplied into the
+# density so it thins both the floor and the puffs — a veil that only thinned
+# the floor would leave a puff drifting over the boost bar at full strength,
+# which is the one place the smoke is not allowed to win.
+func _hud_veil(x: float, y: float) -> float:
+	var w: float = _window(y, HUD_VEIL_TOP, _veil_bottom(), HUD_VEIL_FADE)
+	if w <= 0.0:
+		return 1.0
+	var centre: float = float(board.board_width) * 0.5
+	w *= _window(x, centre - _veil_half_w, centre + _veil_half_w, HUD_VEIL_SIDE_FADE)
+	return lerp(1.0, HUD_VEIL_ALPHA, w)
+
+# 1 inside [lo, hi], 0 outside it by `fade`, smoothstepped between. One
+# function for both axes so the window's corners are the product of two
+# identical ramps and no edge is harder than another.
+func _window(v: float, lo: float, hi: float, fade: float) -> float:
+	if v <= lo - fade or v >= hi + fade:
+		return 0.0
+	if v < lo:
+		return smoothstep(0.0, 1.0, (v - (lo - fade)) / fade)
+	if v > hi:
+		return 1.0 - smoothstep(0.0, 1.0, (v - hi) / fade)
+	return 1.0
+
+# The floor's own drift, ~1.0 +/- BASE_VARIATION. Two sines per axis at an
+# awkward ratio so the pattern does not tile inside the five seconds the
+# effect lasts, plus a slow crawl on _clock so it is never the same field
+# twice. This is what stops the band being a rectangle of one value; see
+# BASE_VARIATION.
+func _wobble(x: float, y: float) -> float:
+	var t: float = _clock * WOBBLE_DRIFT
+	var a: float = sin(x * WOBBLE_X_SCALE + y * WOBBLE_Y_SCALE + t)
+	var b: float = sin(x * WOBBLE_X_SCALE * 1.63 - y * WOBBLE_Y_SCALE * 0.71 + t * 1.31 + 2.2)
+	return 1.0 + BASE_VARIATION * (0.6 * a + 0.4 * b)
 
 # Where the boost bar ends, read off PlayerBoard's own constants rather than
 # copied here — copying a PlayerBoard constant into a skill file is the
@@ -377,14 +523,16 @@ func _band_top() -> float:
 # of writing (14 + 9) and are only reached if the constants are renamed —
 # in which case the band lands where the bar used to be rather than
 # erroring inside every draw.
-func _resolve_hud_bottom() -> float:
+func _resolve_hud() -> void:
 	var consts: Dictionary = {}
 	var board_script: Script = board.get_script()
 	if board_script != null:
 		consts = board_script.get_script_constant_map()
 	var margin_top: float = float(consts.get("BOOST_BAR_MARGIN_TOP", 14.0))
 	var bar_h: float = float(consts.get("BOOST_BAR_HEIGHT", 9.0))
-	return margin_top + bar_h
+	_hud_bottom = margin_top + bar_h
+	var bar_frac: float = float(consts.get("BOOST_BAR_WIDTH_FRAC", 0.5))
+	_veil_half_w = float(board.board_width) * bar_frac * 0.5 + HUD_VEIL_SIDE_PAD
 
 # The band's final (fully rolled-in) bottom edges. Used both for the drawn
 # geometry (scaled by _reach) and as the fixed wrap span for the puffs —
@@ -402,14 +550,17 @@ func _band_bottom_final() -> float:
 # directly; the puffs multiply their alpha by it at their centre, which is
 # what makes them dissolve into clear road at the bottom instead of
 # scrolling out of the band as hard-edged discs.
-func _profile(y: float, top: float, feather_top: float, core_bottom: float, band_bottom: float) -> float:
+func _profile(x: float, y: float, top: float, feather_top: float, core_bottom: float, band_bottom: float) -> float:
 	if y <= top or y >= band_bottom:
 		return 0.0
+	var shape: float
 	if y < feather_top:
-		return smoothstep(0.0, 1.0, (y - top) / max(feather_top - top, 0.001))
-	if y <= core_bottom:
-		return 1.0
-	return 1.0 - smoothstep(0.0, 1.0, (y - core_bottom) / max(band_bottom - core_bottom, 0.001))
+		shape = smoothstep(0.0, 1.0, (y - top) / max(feather_top - top, 0.001))
+	elif y <= core_bottom:
+		shape = 1.0
+	else:
+		shape = 1.0 - smoothstep(0.0, 1.0, (y - core_bottom) / max(band_bottom - core_bottom, 0.001))
+	return shape * _hud_veil(x, y)
 
 # --- Puff field -------------------------------------------------------------
 
@@ -488,31 +639,56 @@ func draw_overlay() -> void:
 	_draw_base(canvas, w, top, feather_top, core_bottom, band_bottom, fade)
 	_draw_puffs(canvas, w, top, feather_top, core_bottom, band_bottom, fade)
 
-# The band's floor: the density every point gets before any puff lands on
-# it. Five gradient slices — top feather, core, and FEATHER_STEPS pieces of
-# bottom feather — built exactly the way ScreenMask builds its vignette, as
-# polygons with per-vertex colours.
+# The band's floor: the density every point gets before any puff lands on it.
+# A BASE_ROWS x BASE_COLS grid of quads with per-vertex colours (ScreenMask's
+# technique, in two dimensions instead of one), each corner sampled from the
+# vertical profile times the drifting wobble. Corners are sampled once per
+# grid line and reused by the quads on both sides of it, so neighbours agree
+# exactly and the grid is invisible — what shows is a smooth field.
 func _draw_base(canvas: CanvasItem, w: float, top: float, feather_top: float, core_bottom: float, band_bottom: float, fade: float) -> void:
-	var a: float = BASE_ALPHA * fade
-	_draw_slice(canvas, w, top, feather_top, 0.0, a)
-	_draw_slice(canvas, w, feather_top, core_bottom, a, a)
-	var step_h: float = (band_bottom - core_bottom) / float(FEATHER_STEPS)
-	for i: int in range(FEATHER_STEPS):
-		var y0: float = core_bottom + step_h * float(i)
-		var a0: float = 1.0 - smoothstep(0.0, 1.0, float(i) / float(FEATHER_STEPS))
-		var a1: float = 1.0 - smoothstep(0.0, 1.0, float(i + 1) / float(FEATHER_STEPS))
-		_draw_slice(canvas, w, y0, y0 + step_h, a * a0, a * a1)
-
-# One full-width horizontal slice with a vertical alpha gradient.
-func _draw_slice(canvas: CanvasItem, w: float, y0: float, y1: float, alpha_top: float, alpha_bottom: float) -> void:
-	if y1 - y0 < 0.5:
+	var rows: int = BASE_ROWS
+	var cols: int = BASE_COLS
+	var h: float = band_bottom - top
+	if h < 1.0:
 		return
-	var c_top := Color(SMOKE.r, SMOKE.g, SMOKE.b, alpha_top)
-	var c_bottom := Color(SMOKE.r, SMOKE.g, SMOKE.b, alpha_bottom)
-	canvas.draw_polygon(
-		PackedVector2Array([Vector2(0.0, y0), Vector2(w, y0), Vector2(w, y1), Vector2(0.0, y1)]),
-		PackedColorArray([c_top, c_top, c_bottom, c_bottom])
-	)
+	# Vertex grid, (rows + 1) x (cols + 1): positions and their alphas.
+	var xs := PackedFloat32Array()
+	for c: int in range(cols + 1):
+		xs.append(w * float(c) / float(cols))
+	var ys := PackedFloat32Array()
+	for r: int in range(rows + 1):
+		ys.append(top + h * float(r) / float(rows))
+	var alphas := PackedFloat32Array()
+	for r: int in range(rows + 1):
+		var y: float = ys[r]
+		for c: int in range(cols + 1):
+			# The wobble multiplies the profile rather than being added to
+			# it, so it cannot lift the band above its own top edge or below
+			# its own bottom one — at profile 0 the floor is 0 however the
+			# wobble is leaning.
+			var profile: float = _profile(xs[c], y, top, feather_top, core_bottom, band_bottom)
+			alphas.append(clamp(profile * _wobble(xs[c], y), 0.0, 1.0) * BASE_ALPHA * fade)
+
+	var quad := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
+	var cols_v: PackedColorArray = PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE, Color.WHITE])
+	for r: int in range(rows):
+		for c: int in range(cols):
+			var tl: int = r * (cols + 1) + c
+			var bl: int = tl + cols + 1
+			# Wholly transparent quads are skipped rather than submitted:
+			# above the visible road and below the feather that is most of
+			# the grid, and a transparent polygon still costs a draw call.
+			if alphas[tl] <= 0.002 and alphas[tl + 1] <= 0.002 and alphas[bl] <= 0.002 and alphas[bl + 1] <= 0.002:
+				continue
+			quad[0] = Vector2(xs[c], ys[r])
+			quad[1] = Vector2(xs[c + 1], ys[r])
+			quad[2] = Vector2(xs[c + 1], ys[r + 1])
+			quad[3] = Vector2(xs[c], ys[r + 1])
+			cols_v[0] = Color(SMOKE.r, SMOKE.g, SMOKE.b, alphas[tl])
+			cols_v[1] = Color(SMOKE.r, SMOKE.g, SMOKE.b, alphas[tl + 1])
+			cols_v[2] = Color(SMOKE.r, SMOKE.g, SMOKE.b, alphas[bl + 1])
+			cols_v[3] = Color(SMOKE.r, SMOKE.g, SMOKE.b, alphas[bl])
+			canvas.draw_polygon(quad, cols_v)
 
 func _draw_puffs(canvas: CanvasItem, w: float, top: float, feather_top: float, core_bottom: float, band_bottom: float, fade: float) -> void:
 	var span: float = _wrap_span()
@@ -526,17 +702,73 @@ func _draw_puffs(canvas: CanvasItem, w: float, top: float, feather_top: float, c
 		# or a hitch in the frame rate can never accumulate drift between
 		# puffs and the road.
 		var y: float = wrap_top + fmod(float(puff["y0"]) + _scroll * speed, span)
-		var a: float = _profile(y, top, feather_top, core_bottom, band_bottom) * fade
-		if a <= 0.01:
-			continue
+		# x is resolved before the alpha, not after: the density is now a
+		# function of both axes (the veil window over the HUD bars is not
+		# full width), so a puff has to be asked about its own position
+		# rather than about its row.
 		var sway: float = sin(_clock * float(puff["sway_rate"]) + float(puff["sway_phase"])) * float(puff["sway"])
 		var x: float = clamp(float(puff["x0"]) + sway, min(r0, w * 0.5), max(w - r0, w * 0.5))
+		var a: float = _profile(x, y, top, feather_top, core_bottom, band_bottom) * fade
+		if a <= 0.01:
+			continue
 		var breath: float = 1.0 + PUFF_BREATH_FRAC * sin(_clock * float(puff["breath_rate"]) + float(puff["breath_phase"]))
 		var r: float = r0 * breath
 		var shade: float = puff["shade"]
-		var at := Vector2(x, y)
-		canvas.draw_circle(at, r, Color(SMOKE.r + shade, SMOKE.g + shade, SMOKE.b + shade, PUFF_HALO_ALPHA * a))
-		canvas.draw_circle(at, r * PUFF_CORE_FRAC, Color(SMOKE.r + shade + PUFF_CORE_LIFT, SMOKE.g + shade + PUFF_CORE_LIFT, SMOKE.b + shade + PUFF_CORE_LIFT, PUFF_CORE_ALPHA * a))
+		var tex: Texture2D = _puff_texture()
+		var halo := Color(SMOKE.r + shade, SMOKE.g + shade, SMOKE.b + shade, PUFF_HALO_ALPHA * a)
+		var lift: float = shade + PUFF_CORE_LIFT
+		var core := Color(SMOKE.r + lift, SMOKE.g + lift, SMOKE.b + lift, PUFF_CORE_ALPHA * a)
+		# The gradient's circle is inscribed in the texture, so a rect of side
+		# 2r puts its rim exactly on radius r — the same geometry draw_circle
+		# had.
+		canvas.draw_texture_rect(tex, Rect2(x - r, y - r, r * 2.0, r * 2.0), false, halo)
+		var cr: float = r * PUFF_CORE_FRAC
+		canvas.draw_texture_rect(tex, Rect2(x - cr, y - cr, cr * 2.0, cr * 2.0), false, core)
+
+# One radial-gradient puff, white so the per-puff tint above is what colours
+# it. Built on first draw and held for the life of this effect.
+#
+# It depends on nothing about the board or the effect, so the obvious form is
+# a `static var` shared by every live effect in the process — four boards
+# building four identical 96x96 gradients is waste. That was written and
+# backed out: in Godot 4.7 a `static var` on a GDScript makes the engine
+# report "N ObjectDB instances were leaked at exit" on a plain
+# `godot --headless --quit res://scenes/Main.tscn`, holding null, with
+# nothing ever assigned to it. Measured both ways — the same file with the
+# `static` keywords removed exits clean. The storage for a script's statics
+# evidently outlives the leak check.
+#
+# That check is this project's only automated validation (CLAUDE.md), and its
+# entire value is that a clean run means clean. Trading that for three
+# textures nobody will ever notice is a bad trade, so this is per-effect. It
+# is a Resource, not a Node: it is refcounted away with the effect itself,
+# there is nothing for deactivate() to free, and the session-G leak SkillProbe
+# watches for (a child node left on the board) is not possible here.
+var _puff_tex: GradientTexture2D = null
+
+func _puff_texture() -> GradientTexture2D:
+	if _puff_tex != null:
+		return _puff_tex
+	var g := Gradient.new()
+	# A fresh Gradient already has two points; set those and insert the
+	# plateau between them, rather than assigning the offsets and colors
+	# arrays, which have to stay the same length through the assignment.
+	g.set_offset(0, 0.0)
+	g.set_color(0, Color(1.0, 1.0, 1.0, 1.0))
+	g.set_offset(1, 1.0)
+	g.set_color(1, Color(1.0, 1.0, 1.0, 0.0))
+	g.add_point(PUFF_PLATEAU, Color(1.0, 1.0, 1.0, PUFF_PLATEAU_ALPHA))
+	var t := GradientTexture2D.new()
+	t.gradient = g
+	t.fill = GradientTexture2D.FILL_RADIAL
+	# Centre to the middle of the right edge: a radius of half the texture, so
+	# the circle is inscribed and the corners of the rect are transparent.
+	t.fill_from = Vector2(0.5, 0.5)
+	t.fill_to = Vector2(1.0, 0.5)
+	t.width = PUFF_TEX_SIZE
+	t.height = PUFF_TEX_SIZE
+	_puff_tex = t
+	return _puff_tex
 
 # --- HUD --------------------------------------------------------------------
 

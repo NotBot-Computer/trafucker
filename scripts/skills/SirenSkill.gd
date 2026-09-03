@@ -66,12 +66,29 @@ const DURATION := 5.0
 const SCAN_INTERVAL := 0.3
 
 # How far up the road the horn is heard, in board px. The board is 620 tall
-# and the player sits at ~560, so this reaches roughly two thirds of the way
-# up the visible road. At the ramp's top speed (560 px/s road, ~0.85 closing
-# fraction) a car 400px out still has ~0.8s before it arrives, which is more
-# than twice the shortened slide below — i.e. anything this picks up has time
-# to actually finish getting out of the way.
-const SIREN_REACH := 400.0
+# and the player sits at ~560, so 400 — the value this shipped with — reached
+# only about two thirds of the way up the visible road, and the top third of
+# the lane stayed full of traffic that started moving aside only once it was
+# already close. 720 clears the whole visible lane and a little of the strip
+# above it: the player's y plus the largest vertical_margin the 3/4-player
+# camera zoom adds (Main.set_vertical_margin), which is about where
+# _spawn_obstacle puts a new car. In practice that means a car is pulled
+# aside at or just before the moment it enters the board, and the corridor
+# the skill paints is a corridor all the way to the horizon rather than one
+# that dead-ends in a wall of cars.
+#
+# The timing argument for the old number gets better rather than worse: at
+# the ramp's top speed (560 px/s road, ~0.85 closing fraction) a car 400px
+# out had ~0.8s before it arrived, already more than twice the shortened
+# slide below; at 720 it is ~1.5s. Nothing this picks up is short of time to
+# finish getting out of the way — the reach was never limited by the physics,
+# only by an initial guess at how strong the skill should be.
+#
+# What this does NOT change is the honest limit in the header: a car with
+# nowhere safe to merge stays put. A longer reach finds more cars, not more
+# room, so on a busy board this buys a longer corridor with the same number
+# of stubborn cars standing in it.
+const SIREN_REACH := 720.0
 
 # "In or near the player's own lane", as a fraction of one lane width from
 # car_x. At 0.9 a car sitting on the next lane's center (a full lane width
@@ -103,6 +120,24 @@ const HURRY_TIME_BONUS := 0.7
 
 # --- The light show --------------------------------------------------------
 
+# The player drives an actual police cruiser for the duration. Cut from the
+# user's polis.png by scripts/dev/extract_police.py onto the *player-car*
+# canvas (78x132, PLAYER_KIND's own aspect) — see that file for why the art
+# was fitted to the footprint rather than the footprint to the art.
+#
+# It is a skin and nothing else. car_kind() is deliberately NOT claimed: the
+# hitbox, the steering bounds, the dash clamp, the trail spacing and what the
+# bot thinks fits in a gap all stay exactly what they were, so nothing about
+# this changes how the round plays. A cruiser that was also a different size
+# would be a second, unasked-for mechanic riding along with a costume.
+#
+# The strobing lamps below are drawn ON TOP of it and are not removed now
+# that the sprite has a light bar painted on. The painted one is part of the
+# car; the drawn ones are the skill running, they pulse on the same beat as
+# the corridor and the HUD bar, and they are what says the horn is *live*
+# rather than that the player happens to be in a police car.
+const POLICE_TEXTURE := preload("res://sprites/cars/police.png")
+
 # Emergency red and blue, kept saturated enough to stay legible as a wash at
 # 10% alpha over grey asphalt.
 const SIREN_RED := Color(1.0, 0.2, 0.24)
@@ -112,6 +147,26 @@ const SIREN_BLUE := Color(0.26, 0.5, 1.0)
 # a real light bar strobes at. Fast enough to be urgent, slow enough that it
 # doesn't turn into a flicker on a small board.
 const FLASH_SPEED := 12.0
+
+# Where the two lamps are drawn on the car, in fractions of the drawn car.
+# These are MEASURED off police.png rather than guessed: its painted light
+# bar sits at 0.504 down the car's own content box (i.e. dead centre once the
+# 78x132 canvas's margins are accounted for) with the blue lens centred
+# 0.137 of the car's width left of the middle. The drawn lamps therefore land
+# on the painted ones and light them up, instead of floating over the roof
+# in front of them, which is where the pre-skin numbers (0.1 up, 0.26 apart)
+# put them.
+#
+# LAMP_RADIUS_FRAC is deliberately bigger than the painted lens (which is
+# only ~0.058 of the car wide): at a 33px car a true-to-scale lens is under
+# two pixels across and the strobe stops existing. This is the compromise —
+# large enough to read, small enough to sit on the light bar rather than
+# cover the roof. The floor keeps it visible if a skill shrinks the car
+# (Compact takes it to 66% width).
+const LAMP_Y_FRAC := 0.0 # of car height, from the car's centre; +y is down
+const LAMP_SPREAD_FRAC := 0.16 # of car width, each side of centre
+const LAMP_RADIUS_FRAC := 0.13 # of car width
+const LAMP_RADIUS_MIN := 2.6 # px
 
 const CHEVRON_SPACING := 44.0 # px between the arrows racing up the corridor
 const CHEVRON_SPEED := 260.0 # px/sec they travel — faster than the road, so they read as the effect's own motion rather than as road markings
@@ -138,6 +193,10 @@ func duration() -> float:
 func activate() -> void:
 	_pulse = 0.0
 	_scan_timer = SCAN_INTERVAL
+	# The effect is already in board.active_effects by the time this runs
+	# (SkillEffect's lifecycle contract), so the board's own lookup finds this
+	# skin rather than being answered as if the claim did not exist.
+	board.refresh_car_texture()
 	# Immediately, not on the next scan tick: the horn is pressed now and the
 	# lane in front has to visibly answer now.
 	_sweep()
@@ -165,6 +224,18 @@ func deactivate() -> void:
 	_hurrying.clear()
 	_scan_timer = 0.0
 	_pulse = 0.0
+	# Removed from active_effects before this runs, so the board resolves the
+	# skin *without* this effect — back to the player's own car, or to the
+	# tank if one is up, without this file having to know which.
+	board.refresh_car_texture()
+
+# --- Hooks -----------------------------------------------------------------
+
+# The only board hook this skill touches. Every physics multiplier is left at
+# the base class's 1.0 (the car is not faster, not slower, not grippier) and
+# car_kind() is left empty on purpose — see POLICE_TEXTURE.
+func car_texture() -> Texture2D:
+	return POLICE_TEXTURE
 
 # --- Clearing the lane -----------------------------------------------------
 
@@ -332,7 +403,13 @@ func draw_board() -> void:
 	var half: float = board.road.lane_width() * CORRIDOR_DRAW_FRAC * 0.5
 	var x: float = board.car_x
 	var bottom: float = board.board_height
-	var top: float = max(0.0, board.player_car.position.y - SIREN_REACH)
+	# Clamped to the top of what the camera can actually see, not to 0. The
+	# board draws past [0, board_height] by vertical_margin (the same strip
+	# Road.render_margin exists for, §5 session E), and traffic is visible up
+	# there — so with a reach that now extends into that strip, stopping the
+	# paint at y = 0 would leave cars being visibly shoved aside above the end
+	# of the corridor that is shoving them.
+	var top: float = max(-board.vertical_margin, board.player_car.position.y - SIREN_REACH)
 	if bottom - top <= 1.0:
 		return
 
@@ -391,31 +468,41 @@ func draw_overlay() -> void:
 	var sz: Vector2 = board.car_size()
 	# player_car.position, not the steering position: the beacon is bolted to
 	# the car, so it should ride Nitro's lift and shudder with it.
-	var roof: Vector2 = board.player_car.position + Vector2(0.0, -sz.y * 0.1)
-	var lamp_r: float = max(3.0, sz.x * 0.17)
-	var spread: float = sz.x * 0.26
-	var bar_h: float = lamp_r * 1.15
+	var roof: Vector2 = board.player_car.position + Vector2(0.0, sz.y * LAMP_Y_FRAC)
+	var lamp_r: float = max(LAMP_RADIUS_MIN, sz.x * LAMP_RADIUS_FRAC)
+	var spread: float = sz.x * LAMP_SPREAD_FRAC
 
-	# A dark housing under the lamps, so the two glows read as mounted
-	# hardware rather than as something the car is on fire with.
-	canvas.draw_rect(Rect2(roof.x - spread - lamp_r, roof.y - bar_h * 0.5, (spread + lamp_r) * 2.0, bar_h), Color(0.06, 0.06, 0.09, 0.8 * fade), true)
-	_draw_lamp(canvas, roof + Vector2(-spread, 0.0), lamp_r, SIREN_RED, _lit(0.0), fade, sz)
-	_draw_lamp(canvas, roof + Vector2(spread, 0.0), lamp_r, SIREN_BLUE, _lit(PI), fade, sz)
+	# There used to be a dark housing rectangle drawn under the lamps, so the
+	# two glows read as mounted hardware rather than as something the car was
+	# on fire with. It is gone: the car IS a police cruiser now
+	# (POLICE_TEXTURE) and has a real light bar painted on it, which the fake
+	# housing did nothing but cover up. Blue on the left and red on the right,
+	# matching the painted bar rather than the corridor's edges.
+	# The beams are thrown from the NOSE of the car, not from the lens. The
+	# lamps sit at the car's middle now that they are on its painted light
+	# bar, and a beam starting there washes red and blue over the bonnet the
+	# player is trying to look past. Light leaves the car; it does not sit on
+	# it.
+	var nose_y: float = board.player_car.position.y - sz.y * 0.5
+	_draw_lamp(canvas, roof + Vector2(-spread, 0.0), nose_y, lamp_r, SIREN_BLUE, _lit(PI), fade, sz)
+	_draw_lamp(canvas, roof + Vector2(spread, 0.0), nose_y, lamp_r, SIREN_RED, _lit(0.0), fade, sz)
 
 # One lamp: a beam thrown forward up the road, a soft halo, the lens, and a
 # white-hot center. Kept faint (the beams especially) because this layer sits
 # over the traffic the player is trying to read.
-func _draw_lamp(canvas: CanvasItem, at: Vector2, r: float, col: Color, lit: float, fade: float, sz: Vector2) -> void:
+func _draw_lamp(canvas: CanvasItem, at: Vector2, beam_y: float, r: float, col: Color, lit: float, fade: float, sz: Vector2) -> void:
 	var beam_len: float = sz.y * 2.4
 	var beam_half: float = r * 2.6
 	# Widening toward -y, which is up the road, which is where the traffic
 	# being shouted at is. The two beams overlap in the middle and the
-	# red/blue mix there is exactly what a real light bar throws.
+	# red/blue mix there is exactly what a real light bar throws. The base
+	# sits at beam_y (the car's nose) while the lens stays at `at`, so the
+	# beam reads as leaving the car rather than as painted on it.
 	var beam := PackedVector2Array([
-		at + Vector2(-r * 0.5, 0.0),
-		at + Vector2(r * 0.5, 0.0),
-		at + Vector2(beam_half, -beam_len),
-		at + Vector2(-beam_half, -beam_len),
+		Vector2(at.x - r * 0.5, beam_y),
+		Vector2(at.x + r * 0.5, beam_y),
+		Vector2(at.x + beam_half, beam_y - beam_len),
+		Vector2(at.x - beam_half, beam_y - beam_len),
 	])
 	canvas.draw_colored_polygon(beam, Color(col.r, col.g, col.b, 0.13 * lit * fade))
 	canvas.draw_circle(at, r * 2.4, Color(col.r, col.g, col.b, 0.16 * lit * fade))

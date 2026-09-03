@@ -64,7 +64,7 @@ Every so often a glowing pickup appears in a lane. Drive over it and two icons c
 |---|---|---|
 | self | **Tank Mode** | 6s as an invincible tank that crushes traffic; your boost key fires the cannon |
 | self | **Nitro** | lifts off and rockets up the road at 2.85x, flying *over* the traffic |
-| self | **Make Way** | 5s of siren — traffic ahead of you signals and pulls out of your lane |
+| self | **Make Way** | 5s of siren — your car becomes a police cruiser and traffic ahead signals and pulls out of your lane |
 | self | **Pit Stop** | instantly gives back a lost life; if you have all three, fills your boost bar instead |
 | self | **Compact** | your car shrinks to two-thirds width for 7s, so tight gaps become gaps |
 | opponent | **Taxi** | a reckless cab barges onto everyone else's board and runs riot for 11s |

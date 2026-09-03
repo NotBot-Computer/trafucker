@@ -39,10 +39,27 @@ extends SkillEffect
 ##    writes exactly one field, `car_vx`, and only ever as an acceleration —
 ##    see _apply_fishtail.
 ##
-## VISUALS are procedural, in draw_board() (above the road, under the traffic
-## and the car, so a spill can never hide an oncoming vehicle — this skill
-## handicaps control, not vision). No art asset exists for it; the choice-icon
-## glyph sprites/skills/icon_slick.png is the only file it owns.
+## VISUALS are sprites, in draw_board() — above the road, under the traffic
+## and under the player's car. That layering does two jobs now. It is still
+## the reason a spill can never hide an oncoming vehicle (this skill
+## handicaps control, not vision), and it is also what makes the oil read as
+## being ON the asphalt: every vehicle on the board, the victim's included,
+## is drawn after it and therefore visibly drives over it.
+##
+## The eight puddles are cut out of the user's yag.png by
+## scripts/dev/extract_oil.py into sprites/skills/oil_1..8.png. The
+## choice-icon glyph sprites/skills/icon_slick.png is the only other file
+## this skill owns.
+##
+## They are drawn at FULL opacity. The first version had no art and drew
+## procedural polygons at 58% alpha so the road texture would survive
+## underneath — the theory being that a solid spill would read as a hole in
+## the road rather than as something lying on it. With real art that theory
+## inverts: the sheet's puddles carry their own dark rim, rainbow film and
+## wet highlights, which is exactly the information that says "liquid, on a
+## surface", and thinning them to 58% destroys all three and leaves a grey
+## smudge that reads as a rendering fault. What keeps them from reading as
+## holes is the traffic passing over them, not transparency.
 
 # --- Tuning -----------------------------------------------------------------
 
@@ -116,21 +133,51 @@ const FADE_OUT := 0.9
 # read as contaminated without tiling into a solid dark sheet that would make
 # the asphalt — and the lane stripes the player navigates by — hard to read.
 const SPILL_COUNT := 9
-const SPILL_VERTS := 11 # enough for an irregular puddle, few enough to stay a cheap polygon
-const SPILL_RADIUS_MIN_FRAC := 0.45 # of lane width
-const SPILL_RADIUS_MAX_FRAC := 1.05 # of lane width — a big one covers a lane, never two
-const SPILL_STRETCH_Y := 1.5 # spills are streaked along the direction of travel, not round
+
+# The art. Eight distinct puddles, so a field of nine has at most one repeat,
+# and with the flip and the tilt below no two on screen ever look alike.
+# Untyped const array on purpose — a typed one buys nothing here and the call
+# site declares the element type anyway.
+const SPILL_TEXTURES := [
+	preload("res://sprites/skills/oil_1.png"),
+	preload("res://sprites/skills/oil_2.png"),
+	preload("res://sprites/skills/oil_3.png"),
+	preload("res://sprites/skills/oil_4.png"),
+	preload("res://sprites/skills/oil_5.png"),
+	preload("res://sprites/skills/oil_6.png"),
+	preload("res://sprites/skills/oil_7.png"),
+	preload("res://sprites/skills/oil_8.png"),
+]
+
+# Drawn width, as a fraction of lane width — sized off the lane and not off
+# the board, so a spill means "about a lane's worth of oil" whatever the lane
+# count is (the same rule SmokeScreenSkill sizes its puffs by). The range is
+# the same on-screen footprint the polygons had: the small end is a patch a
+# car can straddle, the big end covers a lane and change, and nothing ever
+# spans two lanes — a spill you cannot drive around is a wall, and there is
+# a different skill for that.
+const SPILL_WIDTH_MIN_FRAC := 1.0
+const SPILL_WIDTH_MAX_FRAC := 2.15
+
+# Height comes from each texture's own aspect ratio, times this. Kept small:
+# the sheet's puddles are already streaked along their long axis (one is
+# nearly 3:1) and stretching that further visibly smears the rainbow film,
+# which is the part of the art worth leaving intact. The old procedural
+# version needed 1.5 because a polygon of random radii is round by default
+# and had nothing else to say which way the traffic was moving.
+const SPILL_STRETCH_Y := 1.15
+
+# Max random rotation either way, radians — ~17 degrees. Enough that the
+# field does not read as eight stamps in a row, small enough that every
+# puddle still lies broadly along the road rather than across it.
+const SPILL_TILT := 0.30
+
 const SPILL_WRAP_PAD := 140.0 # px of off-screen room above/below, so nothing pops in mid-view
 
-# Kept dark and translucent rather than opaque black: the road texture has to
-# survive underneath, or the spill stops reading as something *on* the
-# asphalt and starts reading as a hole in it.
-const SPILL_BODY := Color(0.045, 0.04, 0.06, 0.58)
-const SPILL_SHEEN_ALPHA := 0.3 # the rainbow film, drawn small and inside the body
-const SPILL_SHEEN_SCALE := 0.58 # sheen patch size as a fraction of the spill
-const SHEEN_HUE_RATE := 0.09 # hue cycles/sec — slow enough to look like a film, not a disco
-const SPILL_GLINT := Color(0.85, 0.9, 1.0, 0.22) # wet highlight along the spill's upper edge
-const SPILL_GLINT_WIDTH := 1.5
+# Full opacity. See the header for why this is 1.0 and not the 0.58 the
+# procedural version used; the fade envelope still multiplies it at both ends
+# so a spill never pops on or off, but at rest the art is drawn as authored.
+const SPILL_OPACITY := 1.0
 
 # Tyre smear at the car — the local half of the tell. The spill says the road
 # is oiled; this says *your* tyres are the ones on it.
@@ -170,9 +217,9 @@ var _age: float = 0.0
 # not wander in lockstep — the same reason SkillPickup randomizes _pulse_t.
 var _phase: float = randf() * 100.0
 
-# One entry per spill: {x, y, rx, ry, hue, shape}. Built once in activate()
-# and only read afterwards, so the puddles keep their identity as they scroll
-# instead of being re-randomized every frame into TV static.
+# One entry per spill: {x, y, w, h, tex, tilt, flip}. Built once in
+# activate() and only read afterwards, so the puddles keep their identity as
+# they scroll instead of being re-randomized every frame into TV static.
 var _spills: Array[Dictionary] = []
 
 # --- Lifecycle --------------------------------------------------------------
@@ -288,33 +335,40 @@ func _build_spills() -> void:
 	_spills.clear()
 	var lane_w: float = board.road.lane_width()
 	var span: float = _wrap_span()
+	# Every texture is offered before any is repeated, so a nine-spill field
+	# is the whole sheet plus one rather than the same puddle four times —
+	# which is what an independent randi() per spill produces often enough to
+	# notice (birthday problem: over 60% of fields would have had a triple).
+	var bag: Array[int] = []
 	for i: int in range(SPILL_COUNT):
+		if bag.is_empty():
+			for t: int in range(SPILL_TEXTURES.size()):
+				bag.append(t)
+			bag.shuffle()
+		var tex: Texture2D = SPILL_TEXTURES[bag.pop_back()]
+
 		# Placed on a lane centre rather than anywhere across the width, so a
 		# spill reads as something a vehicle leaked while driving a lane —
 		# and so it never sits mostly on the shoulder, where the player never
 		# goes and the tell would be wasted.
 		var lane: int = randi() % max(int(board.lane_count), 1)
 		var jitter: float = randf_range(-lane_w * 0.35, lane_w * 0.35)
-		var radius: float = lane_w * randf_range(SPILL_RADIUS_MIN_FRAC, SPILL_RADIUS_MAX_FRAC)
-		var shape := PackedVector2Array()
-		for v: int in range(SPILL_VERTS):
-			var a: float = TAU * float(v) / float(SPILL_VERTS)
-			# Per-vertex radius jitter is what makes it a puddle rather than a
-			# polygon. Kept above 0.7 so no vertex folds in far enough for the
-			# outline to self-intersect, which draw_colored_polygon renders as
-			# a visible pinch.
-			var r: float = randf_range(0.72, 1.0)
-			shape.append(Vector2(cos(a), sin(a)) * r)
+		var w: float = lane_w * randf_range(SPILL_WIDTH_MIN_FRAC, SPILL_WIDTH_MAX_FRAC)
+		# Height from the texture's own aspect, so a streaky puddle stays
+		# streaky and a round one stays round — the sheet's variety is the
+		# point of having eight of them.
+		var src: Vector2 = tex.get_size()
+		var h: float = w * (src.y / max(src.x, 1.0)) * SPILL_STRETCH_Y
 		_spills.append({
 			"x": board.road.lane_center_x(lane) + jitter,
 			"y": randf() * span,
-			"rx": radius,
-			"ry": radius * SPILL_STRETCH_Y,
-			# Each spill's sheen starts somewhere different in the hue cycle,
-			# so the field shimmers as a scatter of colours rather than
-			# pulsing as one block.
-			"hue": randf(),
-			"shape": shape,
+			"w": w,
+			"h": h,
+			"tex": tex,
+			"tilt": randf_range(-SPILL_TILT, SPILL_TILT),
+			# Mirroring doubles the sheet for free and costs nothing: oil has
+			# no handedness, so a flipped puddle is a puddle.
+			"flip": -1.0 if randf() < 0.5 else 1.0,
 		})
 
 # Vertical distance a spill travels before it wraps back to the top. Covers
@@ -327,9 +381,13 @@ func _wrap_span() -> float:
 
 # --- Drawing ----------------------------------------------------------------
 
-# Above the road, below the traffic and the car. That layering is the point: a
-# spill that could cover an oncoming vehicle would be handicapping the
-# player's *vision*, and there is a different skill for that.
+# Above the road, below the traffic and below the player's own car — which
+# is to say, every vehicle on the board drives *over* the oil. That layering
+# is doing two jobs. A spill that could cover an oncoming vehicle would be
+# handicapping the player's *vision*, and there is a different skill for
+# that; and now that the puddles are opaque art rather than a translucent
+# wash, being overdrawn by the traffic is the only thing telling the eye they
+# are lying on the asphalt rather than floating over it.
 func draw_board() -> void:
 	var alpha: float = _envelope()
 	if alpha <= 0.0:
@@ -340,50 +398,31 @@ func draw_board() -> void:
 func _draw_spills(alpha: float) -> void:
 	var span: float = _wrap_span()
 	var top: float = -(board.vertical_margin + SPILL_WRAP_PAD)
+	# The tint is white: it multiplies the texture, so anything but white
+	# would recolour the rainbow film, which is the whole reason this art was
+	# worth wiring up. Only the alpha carries the fade envelope.
+	var tint := Color(1.0, 1.0, 1.0, SPILL_OPACITY * alpha)
 	for spill: Dictionary in _spills:
-		var shape: PackedVector2Array = spill["shape"]
 		var cx: float = spill["x"]
-		var rx: float = spill["rx"]
-		var ry: float = spill["ry"]
 		# +_scroll, so the field slides toward +y as distance grows — the
 		# same direction the road tiles and the traffic move (§5 session A,
 		# fix 2, is the entry on what happens when a layer disagrees). fposmod
 		# rather than fmod because the offset is only ever positive today but
 		# would silently mirror the field if that stopped being true.
 		var cy: float = top + fposmod(float(spill["y"]) + _scroll, span)
-
-		var body := PackedVector2Array()
-		body.resize(shape.size())
-		for i: int in range(shape.size()):
-			body[i] = Vector2(cx + shape[i].x * rx, cy + shape[i].y * ry)
-		board.draw_colored_polygon(body, _faded(SPILL_BODY, alpha))
-
-		# The oily film: a smaller copy of the same outline, pushed up and
-		# left inside the body so it reads as a highlight lying on the puddle
-		# rather than as a second puddle. The hue crawls, and each spill
-		# starts at its own point in the cycle.
-		var sheen_hue: float = fposmod(float(spill["hue"]) + _phase * SHEEN_HUE_RATE, 1.0)
-		var sheen_color: Color = Color.from_hsv(sheen_hue, 0.55, 1.0, SPILL_SHEEN_ALPHA)
-		var sx: float = cx - rx * 0.16
-		var sy: float = cy - ry * 0.1
-		var sheen := PackedVector2Array()
-		sheen.resize(shape.size())
-		for i: int in range(shape.size()):
-			sheen[i] = Vector2(
-				sx + shape[i].x * rx * SPILL_SHEEN_SCALE,
-				sy + shape[i].y * ry * SPILL_SHEEN_SCALE
-			)
-		board.draw_colored_polygon(sheen, _faded(sheen_color, alpha))
-
-		# Wet glint along the upper edge only. In Godot 2D +y is down, so the
-		# upper half of the outline is the vertices whose sin() is negative —
-		# the back half of the vertex ring, indices n/2..n-1. Lighting one
-		# edge is what sells "liquid" over "dark paint".
-		var glint := PackedVector2Array()
-		for i: int in range(int(shape.size() / 2), shape.size()):
-			glint.append(body[i])
-		if glint.size() >= 2:
-			board.draw_polyline(glint, _faded(SPILL_GLINT, alpha), SPILL_GLINT_WIDTH)
+		var w: float = spill["w"]
+		var h: float = spill["h"]
+		# draw_texture_rect cannot rotate or mirror, so the tilt and the flip
+		# go through the canvas transform and the rect is drawn centred on the
+		# origin. This is the one thing in this file that leaves state behind
+		# on the CanvasItem: draw_board() runs partway through
+		# PlayerBoard._draw(), so the transform MUST be put back before this
+		# function returns or every remaining draw call on the board — the
+		# boost bar, the life pips, the bot tag — is drawn rotated. Hence the
+		# reset after the loop, which is unconditional for that reason.
+		board.draw_set_transform(Vector2(cx, cy), float(spill["tilt"]), Vector2(float(spill["flip"]), 1.0))
+		board.draw_texture_rect(spill["tex"], Rect2(-w * 0.5, -h * 0.5, w, h), false, tint)
+	board.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _draw_tyre_smears(alpha: float) -> void:
 	var sz: Vector2 = board.car_size()
