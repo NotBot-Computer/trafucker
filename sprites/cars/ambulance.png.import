@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c4h4lvrpj84td"
-path="res://.godot/imported/truck_green.png-09e1b267d21d0c9261dbef404d6118c5.ctex"
+uid="uid://by4vjlahj1sj3"
+path="res://.godot/imported/ambulance.png-9b181464fd70fe1af4de884318666b20.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://sprites/cars/truck_green.png"
-dest_files=["res://.godot/imported/truck_green.png-09e1b267d21d0c9261dbef404d6118c5.ctex"]
+source_file="res://sprites/cars/ambulance.png"
+dest_files=["res://.godot/imported/ambulance.png-9b181464fd70fe1af4de884318666b20.ctex"]
 
 [params]
 

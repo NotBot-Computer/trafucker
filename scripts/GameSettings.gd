@@ -86,10 +86,17 @@ var skin_colors: Array[Color] = [PLAYER_SKINS[0]["color"], PLAYER_SKINS[1]["colo
 # nimbler kinds (sports cars, motorcycles) sit near the bottom so they roughly
 # keep pace with you.
 #
-# The weights below total 100, so each one reads directly as a percentage.
+# The weights below total 100, so each one reads directly as a percentage, and
+# adding a kind forces an explicit decision about what it displaces rather than
+# quietly diluting everything. Session AB's four service vehicles cost 9 points,
+# taken 4 from `sedan` and 1 each from `suv`/`pickup`/`van`/`sports`/`trailer`:
+# the first five because they are the bulk of traffic and the shape of the
+# distribution should survive, `trailer` because it is the closest thing in the
+# table to what was added (a long, slow, lane-filling vehicle) and so it is the
+# one that should give up share rather than accumulate it.
 const TRAFFIC_KINDS: Array[Dictionary] = [
 	{
-		"kind": "sedan", "width_frac": 0.62, "height_frac": 1.69, "weight": 30,
+		"kind": "sedan", "width_frac": 0.62, "height_frac": 1.69, "weight": 26,
 		"speed_frac_min": 0.55, "speed_frac_max": 0.85,
 		"textures": [
 			preload("res://sprites/cars/sedan_silver.png"),
@@ -101,7 +108,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "suv", "width_frac": 0.68, "height_frac": 1.98, "weight": 16,
+		"kind": "suv", "width_frac": 0.68, "height_frac": 1.98, "weight": 15,
 		"speed_frac_min": 0.55, "speed_frac_max": 0.85,
 		"textures": [
 			preload("res://sprites/cars/suv_white.png"),
@@ -117,7 +124,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "pickup", "width_frac": 0.62, "height_frac": 2.23, "weight": 12,
+		"kind": "pickup", "width_frac": 0.62, "height_frac": 2.23, "weight": 11,
 		"speed_frac_min": 0.6, "speed_frac_max": 0.9,
 		"textures": [
 			preload("res://sprites/cars/pickup_red.png"),
@@ -128,7 +135,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "van", "width_frac": 0.58, "height_frac": 1.55, "weight": 11,
+		"kind": "van", "width_frac": 0.58, "height_frac": 1.55, "weight": 10,
 		"speed_frac_min": 0.6, "speed_frac_max": 0.9,
 		"textures": [
 			preload("res://sprites/cars/van_blue.png"),
@@ -143,7 +150,7 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "sports", "width_frac": 0.6, "height_frac": 2.09, "weight": 9,
+		"kind": "sports", "width_frac": 0.6, "height_frac": 2.09, "weight": 8,
 		"speed_frac_min": 0.35, "speed_frac_max": 0.6,
 		# The quickest thing on the road, so it sits at the *bottom* of the speed_frac
 		# band with the motorcycles: a low fraction means it closes on you slowly,
@@ -157,18 +164,35 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "truck", "width_frac": 0.66, "height_frac": 5.07, "weight": 7,
+		"kind": "truck", "width_frac": 0.66, "height_frac": 3.67, "weight": 7,
 		"speed_frac_min": 0.75, "speed_frac_max": 0.95,
+		# Re-skinned from the user's tırlar.png in session AB
+		# (scripts/dev/extract_semis.py). Six bodies instead of five, and the
+		# cargo varies now — box, tank, timber — where every old sprite was the
+		# same grey trailer behind a differently-coloured cab.
+		#
+		# **height_frac fell 5.07 -> 3.67, and that is a difficulty change, not
+		# a cosmetic one:** a semi is 130px of a 620px board now, down from 179.
+		# 3.67 is the new art's own aspect (the six sprites run 3.62-3.73, worst
+		# stretch 1.6%) and stretching it back to 5.07 is the §8 mistake — the
+		# ribs coarsen and the vehicle reads as a zoomed sprite rather than a
+		# longer truck. Session Q's 40% lengthening was compensation for a
+		# trailer drawn *narrower than its own tractor*, which this art does not
+		# have; the defect it was correcting left with the sprite.
+		# width_frac stays at 0.66 so exactly one number moves — this sheet's
+		# own ruler would put these at 0.74 (see the script), and width_frac is
+		# the one knob §9 says not to reach for.
 		"textures": [
 			preload("res://sprites/cars/truck_red.png"),
 			preload("res://sprites/cars/truck_blue.png"),
 			preload("res://sprites/cars/truck_white.png"),
-			preload("res://sprites/cars/truck_green.png"),
-			preload("res://sprites/cars/truck_black.png"),
+			preload("res://sprites/cars/truck_silver.png"),
+			preload("res://sprites/cars/truck_tanker.png"),
+			preload("res://sprites/cars/truck_logger.png"),
 		],
 	},
 	{
-		"kind": "trailer", "width_frac": 0.62, "height_frac": 3.74, "weight": 5,
+		"kind": "trailer", "width_frac": 0.62, "height_frac": 3.74, "weight": 4,
 		"speed_frac_min": 0.78, "speed_frac_max": 0.95,
 		# A pickup towing something (boat / camper / flatbed / cargo box / jet-ski).
 		# Nearly as long as a semi and the slowest-driving kind in the table, which is
@@ -203,6 +227,66 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 		"speed_frac_min": 0.75, "speed_frac_max": 0.95,
 		"textures": [
 			preload("res://sprites/cars/bus_coach.png"),
+		],
+	},
+
+	# --- The four service vehicles off buyuka.png (session AB) --------------
+	#
+	# One kind each, one texture each, for the reason session R split `coach`
+	# out of `bus`: their aspects run 3.20 to 3.39, so any single height_frac
+	# would squash one of them by up to 5% — and each has its own speed band
+	# anyway, which is most of what makes them read as different vehicles.
+	# Every height_frac below is its sprite's exact aspect, so FleetProbe
+	# reports 0.0% stretch on all four.
+	#
+	# **width_frac is measured off the sheet, not chosen.** buyuka.png also
+	# draws a police car and a taxi — two vehicles this game already draws at
+	# width_frac 0.62 — so their 204px in that sheet is the ruler every other
+	# vehicle on it is scaled against (see scripts/dev/extract_service.py).
+	# That is why the fire truck ends up the widest thing in the fleet at 0.70:
+	# it is what the artist drew, not a guess. Its sprite is 97px for a 37px
+	# on-road vehicle, the same pixels-per-lane-fraction as the semis, so it
+	# carries no more detail than anything around it.
+	#
+	# The sheet's police car and taxi are deliberately *not* imported: both
+	# kinds already exist, and `taxi.png` in particular is a derivative of
+	# sedan_yellow.png specifically so it belongs to the fleet (§7).
+	{
+		"kind": "ambulance", "width_frac": 0.64, "height_frac": 3.39, "weight": 2,
+		# Quicker than the trucks it is shaped like — an ambulance that trundles
+		# along at the semis' 0.75-0.95 reads as a van with a cross painted on
+		# it. This is the same argument the sports car's low band is made from.
+		"speed_frac_min": 0.55, "speed_frac_max": 0.80,
+		"textures": [
+			preload("res://sprites/cars/ambulance.png"),
+		],
+	},
+	{
+		"kind": "fire_truck", "width_frac": 0.70, "height_frac": 3.20, "weight": 2,
+		"speed_frac_min": 0.72, "speed_frac_max": 0.92,
+		"textures": [
+			preload("res://sprites/cars/fire_truck.png"),
+		],
+	},
+	{
+		"kind": "garbage_truck", "width_frac": 0.69, "height_frac": 3.22, "weight": 2,
+		# The slowest-driving thing in the table, one notch past the trailer's
+		# 0.78 — a rear-loader that stops every thirty metres is the one vehicle
+		# on a motorway you genuinely come up behind, and `trailer`'s comment
+		# explains what that is worth as an obstacle.
+		"speed_frac_min": 0.80, "speed_frac_max": 0.96,
+		"textures": [
+			preload("res://sprites/cars/garbage_truck.png"),
+		],
+	},
+	{
+		# Distinct from `van`'s three box vans, which are 1.55-aspect panel vans
+		# — this is a 3.28-aspect box body on a cab chassis, more than twice as
+		# long on the road (111px against 48).
+		"kind": "box_truck", "width_frac": 0.63, "height_frac": 3.28, "weight": 3,
+		"speed_frac_min": 0.68, "speed_frac_max": 0.90,
+		"textures": [
+			preload("res://sprites/cars/box_truck.png"),
 		],
 	},
 	{

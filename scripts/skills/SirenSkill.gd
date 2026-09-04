@@ -103,9 +103,9 @@ const CORRIDOR_DRAW_FRAC := 1.0
 
 # Clear px demanded between the merging car's bumper and the nearest vehicle
 # already in the target lane. Traffic's own LANE_CHANGE_SAFE_GAP is 200px
-# center-to-center, which for a 179px-long truck is barely 20px of daylight
-# and for two sedans is a gap you could park in — one number cannot mean the
-# same thing for both. This is measured between bumpers instead (see
+# center-to-center, which between two 130px semis is 70px of daylight and
+# between two sedans is 144px — one number cannot mean the same thing for
+# both. This is measured between bumpers instead (see
 # _merge_room) and set just above the taxi's TAXI_SIDE_GAP of 28: a car being
 # sirened at squeezes harder than one changing lanes for its own reasons, but
 # not as hard as a taxi driver.
@@ -371,7 +371,7 @@ func _pull_aside(car: Car, player_x: float, corridor: float) -> void:
 
 # Bumper-to-bumper clearance in the target lane, measured against real
 # vehicle lengths rather than a flat center-to-center number — traffic here
-# runs from a 56px sedan to a 179px truck, and one constant cannot describe
+# runs from a 33px motorcycle to a 130px semi, and one constant cannot describe
 # a safe gap for both. Every obstacle_container child carries a `lane` meta
 # (the §7 invariant), including skill pickups, which are given room too so a
 # merging car never parks on top of one.

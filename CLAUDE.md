@@ -56,6 +56,16 @@ And one for Don't Crash's **modular skills** (`scripts/skills/`), which runs eve
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/SkillProbe.tscn
 ```
 
+And one for Don't Crash's **traffic fleet**, which force-spawns 4000 vehicles through `PlayerBoard._spawn_obstacle()` itself and checks what comes out: every kind and every texture actually appears, the observed distribution matches the weights, nothing is missing art or leaking the placeholder polygon, every `speed_mult` is under 1.0, and each kind's `height_frac` matches its own textures' aspect ratio (it fails over 8%, which is how the squashed coach was found). Run it after any change to `GameSettings.TRAFFIC_KINDS` or to the art under `sprites/cars/`. Note it says nothing about a sprite's *facing* — that check was built, measured and rejected as too noisy to trust (docs/PROJECT_STATE.md §8); new art has to be looked at:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/FleetProbe.tscn
+```
+
+Adding or replacing art means running Godot's importer first — a `preload()` of an unimported PNG is a parse error, so every check above fails misleadingly until this has run:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --import
+```
+
 For measuring bot behaviour rather than looking at it, `--fixed-fps` disables real-time sync and runs the simulation as fast as the machine allows, so a 60-second round takes a few seconds of wall clock:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 120 res://scenes/Main.tscn
