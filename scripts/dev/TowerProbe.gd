@@ -6,7 +6,7 @@ extends Node
 ## random position and rotation and then letting it descend on its own, and
 ## reports what the physics and the turn loop actually did. Run it after
 ## touching TowerMode's descent/settle logic, the kill planes, TowerPiece's
-## physics setup, or the tetromino table:
+## physics setup, or GameSettings.BRICKS:
 ##
 ##   godot --headless --fixed-fps 240 res://scenes/dev/TowerProbe.tscn
 ##
@@ -172,7 +172,20 @@ func _physics_process(_d: float) -> void:
 	# footprint now") is not the same thing and reports false positives: a
 	# brick that legitimately fell off the edge can be knocked back inward by
 	# the next one on its way down, and lands in exactly that state.
+	#
+	# The verdict is deliberately not passed at TowerMode.LOST_Y, which is
+	# only 40px under the slab. A brick's *origin* is the middle of its
+	# bounding box, and for several of the pentominoes that point is an empty
+	# cell — a V hanging off the lip by its corner keeps its origin inboard
+	# long after the brick itself is outside. Measured: a V that plainly
+	# toppled off the right edge crossed LOST_Y with its origin at x=94.5
+	# against a 95.0 lip, and was called a tunnel by half a pixel. Judging a
+	# few brick-heights lower costs nothing (bricks live until DESPAWN_Y at
+	# 600) and lets free fall separate the two cases: anything that went round
+	# the lip is still travelling outward, while a brick that came through the
+	# slab has no sideways velocity to acquire and stays inboard.
 	var half_w: float = _mode.PLATFORM_CELLS * _mode.CELL * 0.5
+	var judge_y: float = _mode.LOST_Y + _mode.CELL * 4.0
 	for c in _mode.pieces.get_children():
 		var p := c as TowerPiece
 		if p == null or p.held:
@@ -180,7 +193,7 @@ func _physics_process(_d: float) -> void:
 		var pos: Vector2 = p.global_position
 		var reach: float = maxf(p.get_meta("probe_max_x", 0.0), absf(pos.x))
 		p.set_meta("probe_max_x", reach)
-		if pos.y > _mode.LOST_Y and reach < half_w:
+		if pos.y > judge_y and reach < half_w:
 			if not p.has_meta("probe_tunnelled"):
 				p.set_meta("probe_tunnelled", true)
 				_tunnels += 1

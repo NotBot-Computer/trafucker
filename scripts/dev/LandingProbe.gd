@@ -73,17 +73,28 @@ func _ready() -> void:
 	_mode = TOWER.instantiate()
 	add_child(_mode)
 
-func _bounds_of(p, xform: Transform2D) -> Dictionary:
+# One collision box's axis-aligned extent, from the corners `box_outlines`
+# already places in world space.
+#
+# Per box, never per brick. A brick's own bounding box is not a surface: the
+# empty corner of a plus, of a U or of an L is inside that rectangle and is
+# exactly where a later brick comes to rest. Measuring against the union
+# reported such a landing as a *flank* — the brick's overall top is above the
+# lander's underside, because the arm it is resting on is not the tallest
+# part of it — and then fell through to the platform two cells below and
+# called a perfect landing a 77px failure. (Found the day the pentominoes
+# arrived; the tetrominoes have shallower notches and happened never to
+# produce one in this probe's sixteen turns.)
+func _box_bounds(loop: PackedVector2Array) -> Dictionary:
 	var minx := INF
 	var maxx := -INF
 	var miny := INF
 	var maxy := -INF
-	for loop in p.box_outlines(xform):
-		for v: Vector2 in loop:
-			minx = minf(minx, v.x)
-			maxx = maxf(maxx, v.x)
-			miny = minf(miny, v.y)
-			maxy = maxf(maxy, v.y)
+	for v: Vector2 in loop:
+		minx = minf(minx, v.x)
+		maxx = maxf(maxx, v.x)
+		miny = minf(miny, v.y)
+		maxy = maxf(maxy, v.y)
 	return {"minx": minx, "maxx": maxx, "miny": miny, "maxy": maxy}
 
 func _physics_process(_delta: float) -> void:
@@ -149,11 +160,13 @@ func _physics_process(_delta: float) -> void:
 # The gap under the *nearest-supported part* of the brick, not under its
 # lowest point.
 #
-# That distinction is the whole measurement. Most tetrominoes decompose into
+# That distinction is the whole measurement. Most bricks decompose into
 # boxes at two different depths — J, T, S and Z all have one box a cell lower
-# than the other — so a brick can legitimately come to rest on its shallower
-# box with a cell of air under the deeper one. Measuring only the lowest
-# point calls that a 38px failure when it is an ordinary, correct landing.
+# than the other, and the pentominoes are worse (U and V both hang a box two
+# cells clear of another) — so a brick can legitimately come to rest on its
+# shallower box with a cell or two of air under the deeper one. Measuring
+# only the lowest point calls that a 38px failure when it is an ordinary,
+# correct landing.
 #
 # Deliberately computed from bounds arithmetic rather than by asking
 # TowerMode._supported(): a probe that checks an implementation by calling
@@ -164,13 +177,10 @@ func _measure(p) -> Dictionary:
 	var best := INF
 
 	for loop in p.box_outlines(xform):
-		var minx := INF
-		var maxx := -INF
-		var maxy := -INF
-		for v: Vector2 in loop:
-			minx = minf(minx, v.x)
-			maxx = maxf(maxx, v.x)
-			maxy = maxf(maxy, v.y)
+		var b: Dictionary = _box_bounds(loop)
+		var minx: float = b["minx"]
+		var maxx: float = b["maxx"]
+		var maxy: float = b["maxy"]
 
 		var surface := INF
 		if maxx > -hw and minx < hw:
@@ -178,12 +188,13 @@ func _measure(p) -> Dictionary:
 		for c in _mode.pieces.get_children():
 			if c == p or c.held or c.doomed:
 				continue
-			var o: Dictionary = _bounds_of(c, c.global_transform)
-			if o["maxx"] <= minx + 1.0 or o["minx"] >= maxx - 1.0:
-				continue
-			if o["miny"] < maxy - 1.0:
-				continue # its top is above this box's underside: a flank, not a floor
-			surface = minf(surface, o["miny"])
+			for other in c.box_outlines(c.global_transform):
+				var o: Dictionary = _box_bounds(other)
+				if o["maxx"] <= minx + 1.0 or o["minx"] >= maxx - 1.0:
+					continue
+				if o["miny"] < maxy - 1.0:
+					continue # its top is above this box's underside: a flank, not a floor
+				surface = minf(surface, o["miny"])
 		if surface < INF:
 			best = minf(best, surface - maxy)
 

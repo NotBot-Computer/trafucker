@@ -1,7 +1,8 @@
 extends RigidBody2D
 class_name TowerPiece
 
-## One car-tetromino brick in Pile Up (GameSettings.MODE_TOWER).
+## One brick in Pile Up (GameSettings.MODE_TOWER) — a tetromino or a
+## pentomino, whichever GameSettings.BRICKS entry it was built from.
 ##
 ## This is a real `RigidBody2D` and nothing about it snaps to a grid — the
 ## whole mode is built on the bricks actually toppling, sliding and settling,
@@ -12,11 +13,11 @@ class_name TowerPiece
 ## shove the tower it is about to land on. TowerMode resolves its contacts
 ## by shape query instead — see that script's header.
 ##
-## The art comes from GameSettings.TETROMINOES, whose sprites are normalised
-## to exact square cells by scripts/dev/extract_blocks.py — so the collision
+## The art comes from GameSettings.BRICKS, whose sprites are normalised to
+## exact square cells by scripts/dev/extract_blocks.py — so the collision
 ## boxes below, which are specified in cell units, line up with what is drawn
 ## without any per-piece correction. See that script's header for why the
-## source sheet needed normalising.
+## source sheets needed normalising.
 
 const MASS_PER_CELL := 1.0
 # Bricks are meant to grip: a tower that slides apart under its own weight is
@@ -115,7 +116,7 @@ var foot_shapes: Array[RectangleShape2D] = []
 var query_shapes: Array[RectangleShape2D] = []
 
 func setup(index: int, cell_size: float, slot: int, color: Color) -> void:
-	var data: Dictionary = GameSettings.TETROMINOES[index]
+	var data: Dictionary = GameSettings.BRICKS[index]
 	shape_index = index
 	cell = cell_size
 	cols = data["cols"]

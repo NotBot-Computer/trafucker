@@ -3,7 +3,7 @@ extends Node2D
 ## Pile Up — the second game mode (GameSettings.MODE_TOWER).
 ##
 ## Every player builds the *same* tower, one brick at a time, on one narrow
-## platform. Whoever is on the clock steers a car-tetromino down onto the
+## platform. Whoever is on the clock steers a brick down onto the
 ## stack; once everything has stopped moving, anything that fell off the
 ## platform during that turn costs the player who dropped it a life. Last
 ## player with a life left wins. That is the whole rule set, and the shared
@@ -173,11 +173,15 @@ const ROTATE_LERP := 18.0
 # The descent still costs about 2.2s against the original 3.8s, and all of
 # that saving came from the half of the change that was actually about time.
 #
-# The floor on the height is the tallest half-extent any brick can have (a
-# vertical I piece reaches 2 cells below its own centre); the ceiling is the
+# The floor on the height is the tallest half-extent any brick can have (the
+# I pentomino reaches 2.5 cells below its own centre); the ceiling is the
 # top of the screen, since the camera holds the stack top at
 # CAM_STACK_TOP_FRAC and the brick appears a fixed distance above that. 7
-# cells puts a vertical I piece's top edge at roughly y=42 on screen.
+# cells puts the I pentomino's top edge at roughly y=23 on screen in the
+# climbing shot, and lower than that in the resting one — the tightest case
+# in the set, and still clear. It was y=42 back when the tallest brick was a
+# vertical I tetromino; the five-cell pieces spent half a cell of that
+# margin, which is why this is now worth stating.
 const SPAWN_CLEARANCE := CELL * 7.0
 const DESCEND_SPEED := 105.0 # px/s, ~2.8 cells/s
 const SOFT_DROP_SPEED := 430.0 # px/s while `down` is held
@@ -426,7 +430,7 @@ func _start_match() -> void:
 	cam_start_y = cam_y
 	camera.position = Vector2(0.0, cam_y)
 	backdrop.set_scroll(0.0)
-	next_index = randi() % GameSettings.TETROMINOES.size()
+	next_index = randi() % GameSettings.BRICKS.size()
 	overlay.visible = false
 	# Not just the toast: a pip left mid-pop by the last match would play out
 	# over this one's fresh row of three.
@@ -462,7 +466,7 @@ func _begin_turn() -> void:
 	var piece: TowerPiece = PIECE_SCENE.instantiate()
 	pieces.add_child(piece) # before setup(): it reaches its @onready Sprite2D
 	piece.setup(next_index, CELL, active_slot, _slot_color(active_slot))
-	next_index = randi() % GameSettings.TETROMINOES.size()
+	next_index = randi() % GameSettings.BRICKS.size()
 
 	aim_steps = 0
 	aim_x = 0.0

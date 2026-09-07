@@ -1,136 +1,255 @@
-"""Extract the seven car-part tetromino pieces from yenib.png as RGBA sprites.
+"""Extract Pile Up's eighteen bricks from the user's tat1.png - tat6.png.
 
-The sheet draws each piece as a cluster of *self-contained square blocks* —
-one wheel, one battery, one radiator per cell — rather than as one continuous
-drawing of a car spread across the cells, which is what the previous sheet
-(bloklar.png) did. That difference is what this script is built around, and
-it is what makes the layout problem below solvable at all.
+## The sheets
 
-## Background
+Six sheets, not one, and each holds two to six pieces scattered around it at
+whatever size and position the generator felt like. Together they cover the
+seven tetrominoes (tat5, tat6) and eleven of the twelve pentominoes (tat1 -
+tat4). There is a nineteenth shape in the bottom-right corner of tat1 that
+runs off both the right and bottom edges of the image: it is a *reflection*
+of the L pentomino tat1 already supplies, so nothing is lost by leaving it
+out, and there is no way to extract art that was never drawn. It is skipped
+deliberately, not overlooked.
 
-The art sits on a baked-in checkerboard (the alpha pattern flattened into
-RGB: alternating ~248 and ~241 neutral greys), and there is no drop shadow —
-an edge goes checkerboard, one or two antialiased pixels, then the block's
-near-black outline. Removing it is the same reachability argument the old
-sheet needed: bright neutral pixels form a single region touching the image
-border, while a block's own bright neutral details (chrome, window glints)
-are walled in by its outline. So the removable region is flood-filled in from
-the border rather than thresholded, and the piece labels printed under each
-cluster never come into it because every cut is made inside a piece's own
-bounding box.
+The art is a world away from the car-part sheet this script used to read
+(`yenib.png`, see git history): each brick is one flat saturated fill inside
+a heavy near-black outline, drawn as a single continuous shape rather than as
+a cluster of self-contained per-cell panels. Two consequences, and they are
+what this version is built around:
 
-## Layout: the arrangement is rotated, the blocks are not
+  * **Nothing here has an "up".** The old sheet's cells were little upright
+    drawings — a wheel, a battery — so its extractor had to re-lay cells to
+    fit the game's footprints rather than rotate them. A flat coloured
+    polyomino has no such constraint, so the shapes below are simply the
+    shapes as drawn, and `GameSettings.TETROMINOES` was rewritten to match
+    the art instead of the art being rearranged to match it.
+  * **A piece must not be cut into cells.** The outline is continuous across
+    cell boundaries. Resampling each cell separately (which the old sheet
+    needed, and could afford) would put a seam down the middle of every
+    straight edge. Each piece is therefore resized *whole*, in one pass.
 
-The game's piece shapes are fixed by GameSettings.TETROMINOES and are not up
-for discussion here — this script exists to re-skin those shapes, not to
-change them. Three of the sheet's clusters are drawn in a different
-orientation than the game's own:
+## Background removal
 
-  * T — sheet has the stem pointing up, the game has it pointing down
-  * J — sheet has the lone block over the left end, the game over the right
-  * L — sheet draws it 3 wide and 2 tall, the game 2 wide and 3 tall
+The background is plain white, with no baked checkerboard and no drop shadow,
+so this is the easy version of the old problem: bright neutral pixels are
+flood-filled in from the border and everything else is kept. Reachability
+rather than a threshold, still, because a bright neutral region enclosed by a
+piece's own outline (the hole in the U pentomino) is background by colour and
+must not be — cutting it out would leave a piece you can see through.
 
-The tempting fix is to rotate or flip the extracted image, and it is wrong:
-these blocks have an up. Rotating the L cluster a quarter turn to fit the
-game's footprint puts a wheel on its side, hangs a headlight sideways and
-stands a spoiler on end. Because each cell is its own complete little panel,
-the arrangement can be rotated *without* rotating the art — cut the cells
-apart, then place them into the footprint the game already defines, each one
-still the right way up. That is what CELLS below encodes: **the run of three
-stays a run of three and the lone block stays the lone block**, so an L's
-horizontal bar becomes an L's vertical bar in the same reading order and the
-odd block stays the odd block.
+`hi > 150` rather than 200 so the grey antialiased pixels between white and
+outline go with the background instead of leaving a pale fringe; the outline
+itself is far below that, and every fill is saturated, so neither is at risk.
 
 ## Cell size
 
-Each cluster is normalised to an exact cols x rows grid of CELL-square cells.
-The sheet is not internally consistent about cell size — the I piece's cells
-are 146px wide against the S piece's 127, and every block is drawn 10-30%
-wider than it is tall — which is the same class of problem the old sheet had
-and is normal for generated art (see PROJECT_STATE §8). Normalising here is
-what lets TowerPiece.gd scale every piece by the single number `cell / 100`
-and trust that a cell is a cell.
+Each piece is normalised to an exact `cols x rows` grid of CELL-square cells.
+The sheets are not internally consistent — a cell is 142px in tat5 and 268px
+in tat2, and within one piece the drawn cell is up to 14% wider than it is
+tall — which is the same class of problem every generated sheet on this
+project has had (PROJECT_STATE §8). Normalising is what lets `TowerPiece.gd`
+scale any brick by the single factor `cell / 100` and trust that a cell is a
+cell, and it is what "everything in the same proportion as the base block"
+means in practice. The resize is therefore anisotropic on purpose: the point
+is a square *cell*, not a preserved source aspect.
+
+Outline weight survives that: measured across the six sheets it runs 7.4% to
+9.4% of a cell, so normalising cell size normalises line weight along with
+it, to within a spread too small to see.
+
+## GRID is the source of truth
+
+`GameSettings.TETROMINOES` must agree with the grids below, piece for piece —
+the collision boxes are cell-unit rectangles laid over exactly this art, so a
+disagreement puts collision where there is no brick and brick where there is
+no collision. Nothing checks that at runtime, so this script checks it here:
+every piece's measured cell occupancy is compared against its declared grid
+and a mismatch is reported. It also prints each piece's rectangle
+decomposition in GDScript form, which is what the `boxes` entries were
+generated from.
 """
 from PIL import Image
 import numpy as np
 from scipy import ndimage
 import os
 
-SRC = "/Users/berkantkucukomer/Documents/yenib.png"
+SRC_DIR = "/Users/berkantkucukomer/Documents"
 OUT = "/Users/berkantkucukomer/Desktop/traffic-tower/sprites/blocks"
 CELL = 100  # exported px per cell; the game renders these downscaled, as it does the car fleet
 
-# name -> (source bbox y0,y1,x0,x1 | source cols,rows | dest cols,rows | cells)
+# name -> sheet, an (x, y) point inside the piece (used to pick it out of the
+# sheet's components — position on the sheet is the only thing that
+# distinguishes two pieces of the same colour), and the shape as drawn.
 #
-# `cells` maps (source row, source col) -> (dest row, dest col). Dest cols/rows
-# and the dest cells must match GameSettings.TETROMINOES exactly, piece for
-# piece — the shapes are the game's, only the art is being replaced. Where the
-# two agree the mapping is the identity and the piece is simply cut in place.
+# '#' is a filled cell. These grids ARE the game's piece shapes: see the
+# module docstring.
 PIECES = [
-    # HERO. 4x1 both sides; the four blocks read left to right as one van, so
-    # this is the one cluster whose cells genuinely must not be reordered.
-    ("i", (141, 252, 685, 1267), 4, 1, 4, 1,
-     {(0, 0): (0, 0), (0, 1): (0, 1), (0, 2): (0, 2), (0, 3): (0, 3)}),
-    # SMASHBOY. Square either way.
-    ("o", (646, 858, 794, 1037), 2, 2, 2, 2,
-     {(0, 0): (0, 0), (0, 1): (0, 1), (1, 0): (1, 0), (1, 1): (1, 1)}),
-    # TEEWEE. Sheet points the stem up, the game points it down: the bar moves
-    # to the top row and the spoiler becomes the stem under its middle.
-    ("t", (345, 575, 732, 1153), 3, 2, 3, 2,
-     {(1, 0): (0, 0), (1, 1): (0, 1), (1, 2): (0, 2), (0, 1): (1, 1)}),
-    # RHODE ISLAND Z. Already the game's S.
-    ("s", (904, 1105, 171, 551), 3, 2, 3, 2,
-     {(0, 1): (0, 1), (0, 2): (0, 2), (1, 0): (1, 0), (1, 1): (1, 1)}),
-    # CLEVELAND Z. Already the game's Z.
-    ("z", (639, 851, 150, 535), 3, 2, 3, 2,
-     {(0, 0): (0, 0), (0, 1): (0, 1), (1, 1): (1, 1), (1, 2): (1, 2)}),
-    # ORANGE RICKY. The arrangement turns a quarter turn clockwise and the
-    # blocks do not: the bar's left-to-right order becomes top-to-bottom, and
-    # the turbo stays the block that sticks out.
-    ("l", (40, 260, 145, 561), 3, 2, 2, 3,
-     {(1, 0): (0, 0), (1, 1): (1, 0), (1, 2): (2, 0), (0, 2): (2, 1)}),
-    # BLUE RICKY. Bar stays put; the wheel crosses to the other end.
-    ("j", (353, 574, 141, 528), 3, 2, 3, 2,
-     {(1, 0): (1, 0), (1, 1): (1, 1), (1, 2): (1, 2), (0, 0): (0, 2)}),
+    # --- tetrominoes: tat5 and tat6 -------------------------------------
+    ("i",  5, (700,  300), ["#",
+                            "#",
+                            "#",
+                            "#"]),
+    ("o",  5, (270,  440), ["##",
+                            "##"]),
+    ("s",  5, (1200, 350), [".##",
+                            "##."]),
+    ("z",  5, (1700, 350), ["##.",
+                            ".##"]),
+    ("l",  6, (300,  200), ["#.",
+                            "#.",
+                            "##"]),
+    ("j",  6, (1200, 200), [".#",
+                            ".#",
+                            "##"]),
+    ("t",  6, (1600, 300), ["###",
+                            ".#."]),
+    # --- pentominoes: tat1 - tat4 ---------------------------------------
+    ("l5", 1, (200,  200), ["#.",
+                            "#.",
+                            "#.",
+                            "##"]),
+    ("n",  1, (500,  250), ["#.",
+                            "##",
+                            ".#",
+                            ".#"]),
+    ("i5", 1, (900,  400), ["#",
+                            "#",
+                            "#",
+                            "#",
+                            "#"]),
+    ("y",  1, (200,  900), ["#.",
+                            "##",
+                            "#.",
+                            "#."]),
+    ("f",  1, (600,  1100), [".#.",
+                             "###",
+                             "#.."]),
+    ("v",  2, (800,  200), ["..#",
+                            "..#",
+                            "###"]),
+    ("u",  2, (200,  1000), ["###",
+                             "#.#"]),
+    ("p",  3, (900,  200), ["##",
+                            "##",
+                            ".#"]),
+    ("t5", 3, (300,  700), [".#.",
+                            ".#.",
+                            "###"]),
+    ("z5", 3, (700,  1000), ["..#",
+                             "###",
+                             "#.."]),
+    ("x",  4, (1100, 450), [".#.",
+                            "###",
+                            ".#."]),
+    ("w",  4, (300,  300), ["#..",
+                            "##.",
+                            ".##"]),
 ]
 
-full = np.array(Image.open(SRC).convert("RGB")).astype(int)
-hi, lo = full.max(axis=2), full.min(axis=2)
-# The checkerboard is neutral and bright. 150 rather than 200 so the one or
-# two antialiased pixels at a block's edge go with it instead of leaving a
-# pale fringe around every block.
-removable = ((hi - lo) < 14) & (hi > 150)
-lab, _ = ndimage.label(removable)
-border = set(lab[0, :]) | set(lab[-1, :]) | set(lab[:, 0]) | set(lab[:, -1])
-border.discard(0)
-alpha = np.where(np.isin(lab, list(border)), 0, 255).astype(np.uint8)
-sheet = np.dstack([full.astype(np.uint8), alpha])
+
+def sheet(n):
+    """One tat sheet as RGBA, background flood-filled away, plus its labels."""
+    rgb = np.array(Image.open("%s/tat%d.png" % (SRC_DIR, n)).convert("RGB")).astype(int)
+    hi, lo = rgb.max(axis=2), rgb.min(axis=2)
+    removable = ((hi - lo) < 20) & (hi > 150)
+    lab, _ = ndimage.label(removable)
+    border = set(lab[0, :]) | set(lab[-1, :]) | set(lab[:, 0]) | set(lab[:, -1])
+    border.discard(0)
+    fg = ~np.isin(lab, list(border))
+    # 8-connectivity: a piece's outline meets itself diagonally at the inside
+    # of every notch, and 4-connectivity splits some pieces in two there.
+    plab, _ = ndimage.label(fg, structure=np.ones((3, 3)))
+    return rgb, plab
+
+
+def decompose(grid):
+    """Filled cells as non-overlapping rectangles, largest first.
+
+    Merged rectangles rather than one box per cell, for the reason in
+    TowerPiece.gd's header: a column of separate unit boxes presents internal
+    edges a neighbouring brick's corner can catch on, and a tower that snags
+    on nothing reads as a bug. Greedy-largest is enough — every shape here
+    comes out in two or three boxes.
+    """
+    rows, cols = len(grid), len(grid[0])
+    left = [[c == "#" for c in row] for row in grid]
+    out = []
+    while any(any(r) for r in left):
+        best = None
+        for y in range(rows):
+            for x in range(cols):
+                if not left[y][x]:
+                    continue
+                w = 0
+                while x + w < cols and left[y][x + w]:
+                    w += 1
+                for ww in range(1, w + 1):
+                    h = 0
+                    while y + h < rows and all(left[y + h][x + i] for i in range(ww)):
+                        h += 1
+                    key = (ww * h, ww)  # ties go to the wider box, then to the earlier start
+                    if best is None or key > best[0]:
+                        best = (key, x, y, ww, h)
+        _, x, y, w, h = best
+        for dy in range(h):
+            for dx in range(w):
+                left[y + dy][x + dx] = False
+        out.append((x, y, w, h))
+    return out
+
 
 os.makedirs(OUT, exist_ok=True)
+sheets = {}
+bad = 0
 
-def square(cell_rgba):
-    """One source cell, resampled to CELL x CELL.
+for name, n, (px, py), grid in PIECES:
+    if n not in sheets:
+        sheets[n] = sheet(n)
+    rgb, plab = sheets[n]
+    idx = plab[py, px]
+    assert idx != 0, "%s: (%d, %d) is background on tat%d.png" % (name, px, py, n)
+    ys, xs = ndimage.find_objects(plab, max_label=idx)[idx - 1]
+    # Masked to this component, so an overlapping neighbour's bounding box
+    # (tat1 and tat3 both have pairs that interleave) cannot bleed in.
+    m = (plab[ys, xs] == idx)
+    cropped = np.dstack([rgb[ys, xs].astype(np.uint8),
+                         np.where(m, 255, 0).astype(np.uint8)])
+    h, w = m.shape
+    cols, rows = len(grid[0]), len(grid)
 
-    Premultiplied, so the transparent side of an edge pixel cannot bleed
-    black into the outline — unpremultiplied RGBA resampling haloes.
-    """
-    f = cell_rgba.astype(np.float32)
+    # Check the art against the declared grid before trusting either.
+    for r in range(rows):
+        for c in range(cols):
+            y0, y1 = round(h * r / rows), round(h * (r + 1) / rows)
+            x0, x1 = round(w * c / cols), round(w * (c + 1) / cols)
+            frac = m[y0:y1, x0:x1].mean()
+            want = grid[r][c] == "#"
+            if (frac > 0.5) != want:
+                print("  !! %s cell (%d,%d) is %.0f%% covered, grid says %s"
+                      % (name, r, c, 100 * frac, "filled" if want else "empty"))
+                bad += 1
+
+    # Premultiplied, so the transparent side of an edge pixel cannot bleed
+    # white into the outline — unpremultiplied RGBA resampling haloes.
+    f = cropped.astype(np.float32)
     f[:, :, :3] *= (f[:, :, 3:4] / 255.0)
     r = np.array(Image.fromarray(f.astype(np.uint8), "RGBA")
-                 .resize((CELL, CELL), Image.LANCZOS)).astype(np.float32)
+                 .resize((cols * CELL, rows * CELL), Image.LANCZOS)).astype(np.float32)
     av = np.clip(r[:, :, 3:4], 1.0, 255.0)
     r[:, :, :3] = np.clip(r[:, :, :3] / (av / 255.0), 0, 255)
-    return r.astype(np.uint8)
+    Image.fromarray(r.astype(np.uint8), "RGBA").save("%s/piece_%s.png" % (OUT, name))
 
-for name, (y0, y1, x0, x1), scols, srows, dcols, drows, cells in PIECES:
-    a = sheet[y0:y1 + 1, x0:x1 + 1]
-    h, w = a.shape[:2]
-    out = np.zeros((drows * CELL, dcols * CELL, 4), np.uint8)
-    for (sr, sc), (dr, dc) in cells.items():
-        cy0, cy1 = round(h * sr / srows), round(h * (sr + 1) / srows)
-        cx0, cx1 = round(w * sc / scols), round(w * (sc + 1) / scols)
-        out[dr * CELL:(dr + 1) * CELL, dc * CELL:(dc + 1) * CELL] = square(a[cy0:cy1, cx0:cx1])
-    Image.fromarray(out, "RGBA").save("%s/piece_%s.png" % (OUT, name))
-    moved = sum(1 for k, v in cells.items() if k != v)
-    print("piece_%s.png  %dx%d  %d cells (%d re-laid)  source cell %dx%d"
-          % (name, dcols * CELL, drows * CELL, len(cells), moved, w // scols, h // srows))
+    # The flat body hue GameSettings carries alongside the texture, for the
+    # UI bits that need a plain Color (the next-piece card's underline, the
+    # landing flash). Median of the saturated pixels, so the outline and the
+    # antialiasing are not averaged into it.
+    body = rgb[ys, xs][m]
+    sat = body[(body.max(axis=1) - body.min(axis=1)) > 60]
+    col = np.median(sat if len(sat) else body, axis=0) / 255.0
+    boxes = ", ".join("Rect2(%d, %d, %d, %d)" % (x, y, bw, bh)
+                      for x, y, bw, bh in decompose(grid))
+    print('piece_%s.png  %dx%d  tat%d  cell %dx%d  Color(%.2f, %.2f, %.2f)  [%s]'
+          % (name, cols * CELL, rows * CELL, n, w // cols, h // rows,
+             col[0], col[1], col[2], boxes))
+
+print("%d pieces, %d cell mismatches" % (len(PIECES), bad))

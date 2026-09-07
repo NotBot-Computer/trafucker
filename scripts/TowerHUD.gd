@@ -213,15 +213,15 @@ func _draw_pip(tex: Texture2D, at: Vector2, base: Vector2, scale_mult: float, al
 
 
 func _draw_next(font: Font, x: float) -> void:
-	var data: Dictionary = GameSettings.TETROMINOES[next_index]
+	var data: Dictionary = GameSettings.BRICKS[next_index]
 	var tex: Texture2D = data["texture"]
 	var color: Color = data["color"]
 
 	draw_rect(Rect2(x, CARDS_Y, COL_W, NEXT_H), PANEL_BG, true)
 	draw_string(font, Vector2(x + PANEL_PAD, CARDS_Y + 24.0), "NEXT BRICK", HORIZONTAL_ALIGNMENT_LEFT, COL_W, 14, LABEL_TEXT)
 
-	# Fit inside the panel without distorting it — the sprites run from 4:1 to
-	# 2:3, so a single flat scale would clip half of them.
+	# Fit inside the panel without distorting it — the sprites run from 3:2 to
+	# 1:5, so a single flat scale would clip half of them.
 	var avail := Vector2(COL_W - PANEL_PAD * 2.0, NEXT_H - 52.0)
 	var tex_size: Vector2 = tex.get_size()
 	var s: float = minf(avail.x / tex_size.x, avail.y / tex_size.y)
