@@ -22,4 +22,28 @@ extends RefCounted
 ## scripts/dev/make_tower_skill_icons.py from a pixel map you add under
 ## scripts/dev/tower_icons/ — same placeholder scheme as Don't Crash's icons.
 
-const SKILLS := {}
+const SKILLS := {
+	# Physics & matter: what a brick is made of and how the tower behaves as
+	# stuff. Glue, a quake, stone — each one a different state of matter.
+	"cement": {
+		"category": "self",
+		"title": "CEMENT",
+		"blurb": "Your brick sets to whatever it touches. Hang it off the edge — it stays.",
+		"script": preload("res://scripts/tower_skills/CementSkill.gd"),
+		"glyph": preload("res://sprites/skills/tower_cement.png"),
+	},
+	"tremor": {
+		"category": "opponent",
+		"title": "TREMOR",
+		"blurb": "The ground shakes on their turn — hardest the instant their brick lands. Whatever is wobbly finds out.",
+		"script": preload("res://scripts/tower_skills/TremorSkill.gd"),
+		"glyph": preload("res://sprites/skills/tower_tremor.png"),
+	},
+	"petrify": {
+		"category": "self",
+		"title": "PETRIFY",
+		"blurb": "The tower is stone until your turn ends. Whatever it was going to drop, it drops on the next player's clock.",
+		"script": preload("res://scripts/tower_skills/PetrifySkill.gd"),
+		"glyph": preload("res://sprites/skills/tower_petrify.png"),
+	},
+}
