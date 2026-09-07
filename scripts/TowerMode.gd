@@ -64,13 +64,20 @@ const PIECE_SCENE := preload("res://scenes/TowerPiece.tscn")
 # -y and "how tall is it" is just -stack_top_y. Every constant below is in
 # those units.
 #
-# Cell size is set by the *vertical* budget, not the horizontal one. The
-# viewport is 1500x800, so width is never the constraint — a tower is only
-# ever a few cells wide — while height decides how much of the tower you can
-# see at once. At 38px about twenty-one cells fit on screen, which is what
-# lets a tall tower read as tall; the first version at 58px could show only
-# five and a half cells of tower beneath the brick in play, so the tower kept
-# scrolling out from under itself.
+# Cell size used to be set by the *vertical* budget — how much of the tower
+# fits on screen — because the camera sat at zoom 1 and a world pixel was a
+# screen pixel. It is not any more: VISIBLE_CELLS owns that question and the
+# camera pulls back to satisfy it, which is the only knob that can change how
+# much tower you see without changing what a brick weighs, how fast it falls
+# or how far a dash carries it. Every speed, tolerance and threshold in this
+# file is in world units and tuned against this number, so **changing CELL
+# means re-deriving all of them** (MAX_FALL_SPEED says so in as many words);
+# changing VISIBLE_CELLS means changing nothing else.
+#
+# 38 is kept for that reason and not because 38 is special. The first version
+# was 58 and could show only five and a half cells of tower beneath the brick
+# in play, so the tower kept scrolling out from under itself — that was fixed
+# here before there was a camera knob to fix it with.
 const CELL := 38.0
 const PLATFORM_CELLS := 5.0
 const PLATFORM_THICKNESS := 30.0 # the collision slab; the drawn outcrop runs much deeper
@@ -177,11 +184,15 @@ const ROTATE_LERP := 18.0
 # I pentomino reaches 2.5 cells below its own centre); the ceiling is the
 # top of the screen, since the camera holds the stack top at
 # CAM_STACK_TOP_FRAC and the brick appears a fixed distance above that. 7
-# cells puts the I pentomino's top edge at roughly y=23 on screen in the
+# cells puts the I pentomino's top edge at roughly y=122 on screen in the
 # climbing shot, and lower than that in the resting one — the tightest case
-# in the set, and still clear. It was y=42 back when the tallest brick was a
-# vertical I tetromino; the five-cell pieces spent half a cell of that
-# margin, which is why this is now worth stating.
+# in the set, with room to spare.
+#
+# That margin was 23px until VISIBLE_CELLS pulled the camera back: this is a
+# world distance and the ceiling it is measured against is a screen one, so
+# every cell of extra zoom-out buys headroom here for free. It was 42px when
+# the tallest brick was a vertical I tetromino, and the pentominoes spent
+# half a cell of it — which is the reason the number is written down.
 const SPAWN_CLEARANCE := CELL * 7.0
 const DESCEND_SPEED := 105.0 # px/s, ~2.8 cells/s
 const SOFT_DROP_SPEED := 430.0 # px/s while `down` is held
@@ -300,6 +311,33 @@ const DESPAWN_X := 1600.0
 const CAM_GROUND_FRAC := 0.70
 const CAM_STACK_TOP_FRAC := 0.48
 const CAM_LERP := 3.5
+
+# How much tower is on screen at once, in cells. The camera zooms out until
+# this much of the world's height fits, so this is the whole of "how big is a
+# brick" as the player experiences it.
+#
+# 29 against the 21 that a zoom of 1 gives, asked for after a side-by-side
+# with Tricky Towers: the reference fits far more of its tower in frame, and
+# the difference is entirely camera distance — its bricks are not a different
+# shape, they are further away. Deliberately done here rather than by shrinking
+# CELL, which would have been the same picture and a different game: every
+# speed in this file is px/s against a 38px cell, so a smaller cell silently
+# speeds up the descent, the dash and the fall in the units that matter.
+#
+# Everything reading the viewport for a *world* size has to divide by the
+# resulting zoom — that is what _view_world() is for, and the two camera
+# framings and the foreground both go through it. Screen-space work (the HUD
+# and the backdrop, both CanvasLayers) is unaffected by design.
+#
+# Two knock-on effects, both accepted rather than overlooked. The near ground
+# keeps its exact on-screen size, because TowerGround scales its art to the
+# *world* width it is handed and the camera then scales it back down — so the
+# landscape is unchanged and only the tower shrank, which is what the
+# reference looks like. And the backdrop now moves 0.39 of the tower's
+# on-screen travel rather than 0.28, because BACKDROP_PARALLAX is applied to
+# the camera's world climb: that constant's stated job is to walk the picture
+# from bottom to top over a twenty-cell tower, and it still does exactly that.
+const VISIBLE_CELLS := 29.0
 # How much of the camera's climb the backdrop follows. Anything below 1 reads
 # as depth; this value takes a twenty-cell tower almost exactly to the top of
 # the backdrop art, so a full-height tower has climbed the whole picture
@@ -376,6 +414,7 @@ var fallen_this_turn := 0
 
 var stack_top_y := 0.0
 var cam_y := 0.0
+var cam_zoom := 1.0 # set in _ready() from VISIBLE_CELLS; see _view_world()
 var cam_start_y := 0.0
 var best_height := 0
 var bricks_placed := 0
@@ -397,16 +436,21 @@ func _ready() -> void:
 	mat.rough = true
 	platform.physics_material_override = mat
 
-	camera.zoom = Vector2.ONE
+	var screen: Vector2 = get_viewport().get_visible_rect().size
+	cam_zoom = screen.y / (VISIBLE_CELLS * CELL)
+	camera.zoom = Vector2.ONE * cam_zoom
 	camera.make_current()
 
 	# The near ground and the far backdrop are cut from one image and have to
 	# agree about where the ground is: TowerGround puts it at GROUND_Y in the
 	# world, and the backdrop is told where that lands on screen in the
 	# resting shot, which is the only place they are required to line up.
-	var view: Vector2 = get_viewport().get_visible_rect().size
-	ground.configure(GROUND_Y, view.x)
-	backdrop.set_ground_screen_y(GROUND_Y + CAM_GROUND_FRAC * view.y)
+	# `configure` takes a *world* width — TowerGround draws in world space,
+	# under the camera — while `set_ground_screen_y` takes a screen position,
+	# since the backdrop is a CanvasLayer the camera never touches. GROUND_Y
+	# is a world distance, so it crosses that boundary scaled by the zoom.
+	ground.configure(GROUND_Y, _view_world().x)
+	backdrop.set_ground_screen_y(GROUND_Y * cam_zoom + CAM_GROUND_FRAC * screen.y)
 
 	_start_match()
 
@@ -829,8 +873,24 @@ func _recompute_stack_top() -> void:
 func _spawn_y() -> float:
 	return stack_top_y - SPAWN_CLEARANCE
 
+# The visible area in *world* units. Only equal to the viewport size at a
+# zoom of 1, which this mode has not used since VISIBLE_CELLS landed.
+func _view_world() -> Vector2:
+	return get_viewport().get_visible_rect().size / cam_zoom
+
+# A line width in *screen* pixels, for the foreground.
+#
+# Everything TowerMode draws is in world space and so shrinks with the zoom,
+# which is right for the tower and wrong for the marks drawn over it: the
+# height guides sit at alpha 0.10 and the play column's edges at 0.26,
+# thicknesses chosen to be only just visible, and 28% off a hairline is the
+# difference between subtle and absent. The brick is meant to look further
+# away; the guide to it is not.
+func _px(width: float) -> float:
+	return width / cam_zoom
+
 func _camera_target() -> float:
-	var view_h: float = get_viewport().get_visible_rect().size.y
+	var view_h: float = _view_world().y
 	var resting: float = -(CAM_GROUND_FRAC - 0.5) * view_h
 	var climbing: float = stack_top_y - (CAM_STACK_TOP_FRAC - 0.5) * view_h
 	# minf, not maxf: -y is up, so the smaller value is the higher camera, and
@@ -1025,7 +1085,7 @@ func _controls_text() -> String:
 # --- Foreground ------------------------------------------------------------
 
 func _draw() -> void:
-	var view: Vector2 = get_viewport().get_visible_rect().size
+	var view: Vector2 = _view_world()
 	var top: float = cam_y - view.y * 0.5
 	var bottom: float = cam_y + view.y * 0.5
 	var half_w: float = PLATFORM_CELLS * CELL * 0.5
@@ -1052,7 +1112,7 @@ func _draw_height_guides(top: float, bottom: float, half_w: float) -> void:
 	while y > top:
 		y -= spacing
 	while y < minf(bottom, 0.0):
-		draw_line(Vector2(-reach, y), Vector2(reach, y), GUIDE_COLOR, 2.0)
+		draw_line(Vector2(-reach, y), Vector2(reach, y), GUIDE_COLOR, _px(2.0))
 		y += spacing
 
 	# The platform's own footprint, carried upward: the line you are trying
@@ -1060,7 +1120,7 @@ func _draw_height_guides(top: float, bottom: float, half_w: float) -> void:
 	# itself has scrolled off the bottom.
 	for side: float in [-1.0, 1.0]:
 		var x: float = side * half_w
-		draw_line(Vector2(x, 0.0), Vector2(x, top), EDGE_LINE_COLOR, 2.0)
+		draw_line(Vector2(x, 0.0), Vector2(x, top), EDGE_LINE_COLOR, _px(2.0))
 
 # The tower stands on a rock outcrop growing out of the ground, not on a
 # platform on legs. Same silhouette language as the cliffs in the backdrop: a
@@ -1143,7 +1203,7 @@ func _draw_dash_ghost() -> void:
 		var x1: float = here.x + travelled * (t0 + 0.45)
 		draw_line(
 			Vector2(x0, here.y + fy), Vector2(x1, here.y + fy),
-			Color(c.r, c.g, c.b, fade * 0.5), 2.0
+			Color(c.r, c.g, c.b, fade * 0.5), _px(2.0)
 		)
 
 	# Afterimages, brightest nearest the brick so the trail reads as
@@ -1153,11 +1213,11 @@ func _draw_dash_ghost() -> void:
 		var at := Vector2(lerp(here.x, dash_ghost_x, t), here.y)
 		var a: float = fade * (1.0 - t) * 0.7
 		for pts: PackedVector2Array in active_piece.box_outlines(Transform2D(rot, at)):
-			draw_polyline(pts, Color(c.r, c.g, c.b, a), 2.0)
+			draw_polyline(pts, Color(c.r, c.g, c.b, a), _px(2.0))
 
 	# Rim flash where it landed.
 	for pts: PackedVector2Array in active_piece.box_outlines(Transform2D(rot, here)):
-		draw_polyline(pts, Color(1.0, 1.0, 1.0, fade * 0.8), DASH_RIM_WIDTH)
+		draw_polyline(pts, Color(1.0, 1.0, 1.0, fade * 0.8), _px(DASH_RIM_WIDTH))
 
 # A translucent column under the descending brick, down to whatever it would
 # land on. Judging a drop on a leaning tower from the brick alone is
@@ -1173,10 +1233,10 @@ func _draw_drop_guide(half_w: float) -> void:
 	draw_rect(Rect2(x - w * 0.5, y0, w, -y0), Color(c.r, c.g, c.b, DROP_GUIDE_ALPHA), true)
 	draw_line(
 		Vector2(x - w * 0.5, stack_top_y), Vector2(x + w * 0.5, stack_top_y),
-		Color(c.r, c.g, c.b, 0.65), 2.0
+		Color(c.r, c.g, c.b, 0.65), _px(2.0)
 	)
 	for side: float in [-1.0, 1.0]:
 		draw_line(
 			Vector2(side * half_w, stack_top_y - CELL * 0.4), Vector2(side * half_w, 0.0),
-			EDGE_LINE_COLOR, 2.0
+			EDGE_LINE_COLOR, _px(2.0)
 		)
