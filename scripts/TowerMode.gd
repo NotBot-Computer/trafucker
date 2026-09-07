@@ -395,6 +395,23 @@ const DROP_GUIDE_ALPHA := 0.13
 # because a light wash disappears against a bright sky.
 const COLUMN_SHADE := Color(0.06, 0.08, 0.20, 0.10)
 
+# --- Skills ----------------------------------------------------------------
+# Pile Up's skills are earned by *charge* and cast on the caster's own turn.
+# Everything about how one behaves lives in scripts/tower_skills/ (TowerSkill
+# is the contract, TowerSkillCatalog the table); what lives here is only the
+# plumbing — who has what, when a cast is legal, and where in the turn loop
+# each hook is consulted.
+#
+# A clean placement (the brick landed and nothing fell that turn) adds one
+# charge; at CHARGE_TO_SKILL the player is handed a skill into whichever of
+# their two slots is empty — one `self` slot, one `opponent` slot, each with
+# its own key. A player holding both keeps the charge banked until a slot
+# frees. Two, because at three a skill arrives once a match for a player who
+# is losing bricks, and the mode is meant to be about the skills as much as
+# the stacking; at one every turn is a cast and the tower never gets to be a
+# tower. Unplayed, and the first number to move.
+const CHARGE_TO_SKILL := 2
+
 @onready var camera: Camera2D = $Camera2D
 @onready var platform: StaticBody2D = $Platform
 @onready var platform_shape: CollisionShape2D = $Platform/CollisionShape2D
@@ -406,6 +423,8 @@ const COLUMN_SHADE := Color(0.06, 0.08, 0.20, 0.10)
 @onready var overlay_title: Label = $HUD/Overlay/OverlayTitle
 @onready var overlay_body: Label = $HUD/Overlay/OverlayBody
 @onready var countdown: Countdown = $HUD/Countdown
+@onready var skill_overlay: TowerSkillOverlay = $Foreground/SkillOverlay
+@onready var skill_screen: TowerSkillScreen = $HUD/SkillScreen
 
 var state := "piloting" # countdown -> piloting -> settling -> resolving -> piloting, or gameover
 var lives: Array[int] = []
@@ -435,6 +454,17 @@ var cam_zoom := 1.0 # set in _ready() from VISIBLE_CELLS; see _view_world()
 var cam_start_y := 0.0
 var best_height := 0
 var bricks_placed := 0
+
+# Per slot. `charge` counts clean placements toward the next skill; the two
+# `held_*` arrays are skill ids, "" for an empty slot.
+var charge: Array[int] = []
+var held_self: Array[String] = []
+var held_opponent: Array[String] = []
+# Live effects (TowerSkill), any target, in the order they were applied; and
+# opponent effects waiting for their target's turn to come round. An effect
+# is in exactly one of these at a time, or in neither once retired.
+var active_effects: Array = []
+var queued_effects: Array = []
 
 func _ready() -> void:
 	countdown.finished.connect(_on_countdown_finished)
@@ -469,6 +499,9 @@ func _ready() -> void:
 	ground.configure(GROUND_Y, _view_world().x)
 	backdrop.set_ground_screen_y(GROUND_Y * cam_zoom + CAM_GROUND_FRAC * screen.y)
 
+	skill_overlay.mode = self
+	skill_screen.mode = self
+
 	_start_match()
 
 # --- Match / turn flow -----------------------------------------------------
@@ -479,9 +512,18 @@ func _start_match() -> void:
 		c.queue_free()
 	active_piece = null
 
+	# Before the arrays below are rebuilt: a deactivate() may look at
+	# the slot it was attached to.
+	_clear_skill_effects()
 	lives = []
+	charge = []
+	held_self = []
+	held_opponent = []
 	for _i in range(GameSettings.player_count):
 		lives.append(START_LIVES)
+		charge.append(0)
+		held_self.append("")
+		held_opponent.append("")
 
 	stack_top_y = 0.0
 	best_height = 0
@@ -524,9 +566,23 @@ func _begin_turn() -> void:
 	active_slot = slot
 	_recompute_stack_top()
 
+	# Hexes queued against this player join the live list *before* the spawn
+	# — their brick_scale()/spawn_index_override() have to be consulted for
+	# the brick about to appear — but activate() only runs *after* it, so
+	# the effect can see the brick it is attached to. Those two hooks are
+	# therefore read before activate() on an effect's first turn, and
+	# TowerSkill's header tells authors to keep them constant.
+	var arriving: Array = []
+	for e in queued_effects:
+		if e.target == active_slot:
+			arriving.append(e)
+	for e in arriving:
+		queued_effects.erase(e)
+		active_effects.append(e)
+
 	var piece: TowerPiece = PIECE_SCENE.instantiate()
 	pieces.add_child(piece) # before setup(): it reaches its @onready Sprite2D
-	piece.setup(next_index, CELL, active_slot, _slot_color(active_slot))
+	piece.setup(_effect_spawn_index(next_index), CELL * _effect_brick_scale(), active_slot, _slot_color(active_slot))
 	next_index = _next_brick()
 
 	aim_steps = 0
@@ -544,6 +600,16 @@ func _begin_turn() -> void:
 
 	fallen_this_turn = 0
 	state = "piloting"
+
+	# Now the brick exists: first-turn effects come alive, and effects already
+	# live on this player from an earlier turn are told a new one has begun.
+	for e in arriving:
+		e.activate()
+		if e.is_done():
+			_retire(e) # an instant (duration_turns 0) has already done everything
+	for e in _live_for(active_slot):
+		if not arriving.has(e):
+			e.on_turn_start()
 	_refresh_hud()
 
 # The brick has touched something. It stops being steered and becomes an
@@ -554,6 +620,21 @@ func _land() -> void:
 	if active_piece == null:
 		return
 	active_piece.release()
+	# Permanent, by design: this is a landed brick now, and a heavy one stays
+	# heavy in the tower for everyone who builds on it after.
+	var live: Array = _live_for(active_slot)
+	if not live.is_empty():
+		active_piece.mass *= _effect_mass_mult()
+		active_piece.gravity_scale *= _effect_gravity_mult()
+		var friction: float = _effect_friction()
+		if friction >= 0.0:
+			var mat := PhysicsMaterial.new()
+			mat.friction = friction
+			mat.bounce = TowerPiece.BOUNCE
+			mat.rough = true
+			active_piece.physics_material_override = mat
+		for e in live:
+			e.on_release(active_piece)
 	state = "settling"
 	settle_timer = 0.0
 	fall_timer = 0.0
@@ -583,12 +664,35 @@ func _resolve_turn() -> void:
 		else:
 			hud.show_message("%s DROPPED %s   −1 LIFE" % [who, what], Color(1.0, 0.66, 0.30))
 
+	# A clean placement is the charge. Deliberately not "any placement": a
+	# skill has to be earned by building, or the player who is knocking the
+	# tower over every turn is the one being handed the tools.
+	if fallen_this_turn == 0 and lives[active_slot] > 0:
+		charge[active_slot] = mini(CHARGE_TO_SKILL, charge[active_slot] + 1)
+		_try_grant(active_slot)
+
+	# The turn is over for every effect riding it, and the ones that have run
+	# their turns out leave here — after the falls were counted, so an effect
+	# whose whole point is what happens to the tower on landing gets to see
+	# the verdict in on_turn_end().
+	var finished: Array = []
+	for e in _live_for(active_slot):
+		e.on_turn_end()
+		e.turns_left -= 1
+		if e.is_done():
+			finished.append(e)
+	for e in finished:
+		_retire(e)
+	if lives[active_slot] <= 0:
+		_drop_slot_skills(active_slot)
+
 	state = "resolving"
 	resolve_timer = RESOLVE_PAUSE_EVENT if fallen_this_turn > 0 else RESOLVE_PAUSE_QUIET
 	_refresh_hud()
 
 func _end_match() -> void:
 	state = "gameover"
+	_clear_skill_effects()
 	if active_piece != null and active_piece.held:
 		pieces.remove_child(active_piece)
 		active_piece.queue_free()
@@ -620,9 +724,17 @@ func _process(delta: float) -> void:
 	backdrop.set_scroll(maxf(0.0, (cam_start_y - cam_y) * BACKDROP_PARALLAX))
 	hud.tick(delta)
 	queue_redraw()
+	# Every frame, live effects or not: a CanvasItem keeps its last draw list
+	# until asked again, so the frame after the last effect leaves needs a
+	# redraw too, and asking unconditionally is cheaper than tracking that.
+	skill_overlay.queue_redraw()
+	skill_screen.queue_redraw()
 
 func _physics_process(delta: float) -> void:
 	_recompute_stack_top()
+	if state == "piloting" or state == "settling" or state == "resolving":
+		for e in _live_for(active_slot):
+			e.tick(delta)
 	match state:
 		"countdown":
 			# Advanced here, not from the node's own _process: the first
@@ -664,11 +776,12 @@ func _update_piloting(delta: float) -> void:
 	# dash outright on every repeat tick, which cost the dash its fast
 	# frames instead — measured as the first fast frames landing, then the
 	# remainder of the same cell crawling at FOLLOW_SPEED.)
-	var follow: float = FOLLOW_SPEED
+	var follow_mult: float = _effect_follow_mult()
+	var follow: float = FOLLOW_SPEED * follow_mult
 	var goal: float = aim_x
 	if dash_active:
 		if signf(dash_target_x - pos.x) == float(dash_dir):
-			follow = DASH_FOLLOW_SPEED
+			follow = DASH_FOLLOW_SPEED * follow_mult
 			goal = dash_target_x
 		else:
 			dash_active = false # arrived; the ordinary follow takes it from here
@@ -688,7 +801,8 @@ func _update_piloting(delta: float) -> void:
 		if not _blocked(Transform2D(want_rot, pos)):
 			rot = want_rot
 
-	var fall: float = SOFT_DROP_SPEED if _soft_drop_held() else DESCEND_SPEED
+	var soft: bool = _soft_drop_held() and not _effect_soft_drop_locked()
+	var fall: float = SOFT_DROP_SPEED * _effect_soft_drop_mult() if soft else DESCEND_SPEED * _effect_descend_mult()
 	var want_down := Vector2(pos.x, pos.y + fall * delta)
 	var landed := false
 	if _blocked(Transform2D(rot, want_down), Vector2.DOWN):
@@ -966,7 +1080,13 @@ func _aim_held() -> int:
 	var r: bool = Input.is_physical_key_pressed(cfg["right"])
 	if l == r:
 		return 0
-	return -1 if l else 1
+	return _effect_steer_dir(-1 if l else 1)
+
+# A mirrored player's left is right. Applied where the *keys* are read —
+# here and in _unhandled_input — and nowhere deeper, so the probes that steer
+# through _press_steer() on the lattice are never lied to.
+func _effect_steer_dir(dir: int) -> int:
+	return -dir if _effect_steer_flipped() else dir
 
 func _soft_drop_held() -> bool:
 	return Input.is_physical_key_pressed(GameSettings.PLAYER_CONFIGS[active_slot]["down"])
@@ -993,7 +1113,7 @@ func _dash_held() -> bool:
 func _press_direction(dir: int) -> void:
 	if active_piece == null:
 		return
-	if _dash_held():
+	if _dash_held() and not _effect_dash_locked():
 		_dash(dir)
 		# Keep the repeat armed anyway: a player who holds both keys down is
 		# still asking to keep moving after the dash lands.
@@ -1018,7 +1138,7 @@ func _press_steer(dir: int) -> void:
 # does nothing *yet* — it is holding down the other half of the chord, and
 # the direction key that follows dashes through _press_direction().
 func _press_dash() -> void:
-	if active_piece == null:
+	if active_piece == null or _effect_dash_locked():
 		return
 	var dir: int = _aim_held()
 	if dir != 0:
@@ -1062,15 +1182,230 @@ func _unhandled_input(event: InputEvent) -> void:
 	# so "left of drop / right of drop" turns left / right.
 	var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[active_slot]
 	if key == cfg["skill_self"]:
-		aim_steps += 1
+		if not _effect_rotation_locked():
+			aim_steps += 1
 	elif key == cfg["skill_opponent"]:
-		aim_steps -= 1
+		if not _effect_rotation_locked():
+			aim_steps -= 1
 	elif key == cfg["confirm"]:
 		_press_dash()
 	elif key == cfg["left"]:
-		_press_direction(-1)
+		_press_direction(_effect_steer_dir(-1))
 	elif key == cfg["right"]:
-		_press_direction(1)
+		_press_direction(_effect_steer_dir(1))
+	elif key == cfg["cast_self"]:
+		_cast(active_slot, "self")
+	elif key == cfg["cast_opponent"]:
+		_cast(active_slot, "opponent")
+
+# --- Skills ----------------------------------------------------------------
+# The plumbing only. What a skill *does* is entirely inside its TowerSkill.
+
+# Hand `slot` a skill straight into the matching slot, ignoring charge. The
+# grant path and the probe both come through here.
+func _grant(slot: int, id: String) -> void:
+	if not TowerSkillCatalog.has_skill(id):
+		return
+	if TowerSkillCatalog.category_of(id) == "self":
+		held_self[slot] = id
+	else:
+		held_opponent[slot] = id
+
+# At CHARGE_TO_SKILL, a random skill into an empty slot. Both empty: a coin
+# toss between the categories. Neither empty: the charge stays banked, full,
+# and converts the moment a slot frees. A category with nothing in the
+# catalogue is skipped rather than granting "".
+func _try_grant(slot: int) -> void:
+	if charge[slot] < CHARGE_TO_SKILL:
+		return
+	var open: Array[String] = []
+	if held_self[slot] == "" and not TowerSkillCatalog.ids_in("self").is_empty():
+		open.append("self")
+	if held_opponent[slot] == "" and not TowerSkillCatalog.ids_in("opponent").is_empty():
+		open.append("opponent")
+	if open.is_empty():
+		return
+	var category: String = open[randi() % open.size()]
+	var pool: Array[String] = TowerSkillCatalog.ids_in(category)
+	var id: String = pool[randi() % pool.size()]
+	_grant(slot, id)
+	charge[slot] = 0
+	var who: String = GameSettings.PLAYER_CONFIGS[slot]["name"]
+	var c: Color = _slot_color(slot)
+	hud.show_message("%s EARNED %s" % [who, TowerSkillCatalog.title_of(id)], Color(c.r, c.g, c.b, 1.0))
+
+# Only on the caster's own turn, with their brick in the air. A self skill
+# goes live now; an opponent skill is queued for its target's next turn (see
+# TowerSkill's header for why never sooner). Refused, and kept, when there is
+# no one to hex — the match is ending on that turn anyway.
+func _cast(slot: int, category: String) -> bool:
+	if state != "piloting" or slot != active_slot or active_piece == null:
+		return false
+	var id: String = held_self[slot] if category == "self" else held_opponent[slot]
+	if id == "":
+		return false
+	var who: String = GameSettings.PLAYER_CONFIGS[slot]["name"]
+	var c: Color = _slot_color(slot)
+	var title: String = TowerSkillCatalog.title_of(id)
+	if category == "self":
+		var e: TowerSkill = TowerSkillCatalog.make(id, self, slot, slot)
+		if e == null:
+			return false
+		held_self[slot] = ""
+		_go_live(e)
+		hud.show_message("%s — %s" % [who, title], Color(c.r, c.g, c.b, 1.0))
+	else:
+		var probe: TowerSkill = TowerSkillCatalog.make(id, self, slot, slot)
+		if probe == null:
+			return false
+		var targets: Array[int] = []
+		if probe.affects_all_opponents():
+			for i in range(lives.size()):
+				if i != slot and lives[i] > 0:
+					targets.append(i)
+		else:
+			var next: int = _next_living_slot(slot)
+			if next >= 0 and next != slot:
+				targets.append(next)
+		if targets.is_empty():
+			return false
+		held_opponent[slot] = ""
+		for t in targets:
+			var e: TowerSkill = TowerSkillCatalog.make(id, self, slot, t)
+			e.turns_left = e.duration_turns()
+			queued_effects.append(e)
+		var names: Array[String] = []
+		for t in targets:
+			names.append(GameSettings.PLAYER_CONFIGS[t]["name"])
+		hud.show_message("%s → %s — %s" % [who, " + ".join(names), title], Color(c.r, c.g, c.b, 1.0))
+	_refresh_hud()
+	return true
+
+# Listed BEFORE activate() runs, so anything activate() asks — a multiplier,
+# a redraw — is answered with this effect counted. Same contract as
+# PlayerBoard._apply_skill_effect.
+func _go_live(e: TowerSkill) -> void:
+	e.turns_left = e.duration_turns()
+	active_effects.append(e)
+	e.activate()
+	if e.is_done():
+		_retire(e)
+
+# Out of the list first, then deactivate() — the mirror of _go_live, so a
+# deactivate() that asks the mode to recompute anything is not answered by
+# the very effect being retired.
+func _retire(e: TowerSkill) -> void:
+	active_effects.erase(e)
+	queued_effects.erase(e)
+	e.deactivate()
+
+# Every live and queued effect put back, in one place. Called from both
+# ends a match can stop at (restart, game over) and from the probe.
+func _clear_skill_effects() -> void:
+	var all: Array = active_effects + queued_effects
+	active_effects = []
+	queued_effects = []
+	for e in all:
+		e.deactivate()
+
+# An eliminated player takes nothing with them: their held skills go, the
+# hexes waiting for a turn they will never have go, and anything live on
+# them ends now.
+func _drop_slot_skills(slot: int) -> void:
+	held_self[slot] = ""
+	held_opponent[slot] = ""
+	charge[slot] = 0
+	var gone: Array = []
+	for e in active_effects + queued_effects:
+		if e.target == slot:
+			gone.append(e)
+	for e in gone:
+		_retire(e)
+
+func _live_for(slot: int) -> Array:
+	var out: Array = []
+	for e in active_effects:
+		if e.target == slot:
+			out.append(e)
+	return out
+
+# --- The hooks, combined. Multipliers multiply, flags OR, claims first-wins;
+# --- always over the effects attached to whoever is on the clock.
+
+func _effect_descend_mult() -> float:
+	var m := 1.0
+	for e in _live_for(active_slot):
+		m *= float(e.descend_speed_mult())
+	return m
+
+func _effect_soft_drop_mult() -> float:
+	var m := 1.0
+	for e in _live_for(active_slot):
+		m *= float(e.soft_drop_speed_mult())
+	return m
+
+func _effect_follow_mult() -> float:
+	var m := 1.0
+	for e in _live_for(active_slot):
+		m *= float(e.follow_speed_mult())
+	return m
+
+func _effect_mass_mult() -> float:
+	var m := 1.0
+	for e in _live_for(active_slot):
+		m *= float(e.mass_mult())
+	return m
+
+func _effect_gravity_mult() -> float:
+	var m := 1.0
+	for e in _live_for(active_slot):
+		m *= float(e.gravity_scale_mult())
+	return m
+
+func _effect_friction() -> float:
+	for e in _live_for(active_slot):
+		var f: float = e.friction_override()
+		if f >= 0.0:
+			return f
+	return -1.0
+
+func _effect_steer_flipped() -> bool:
+	for e in _live_for(active_slot):
+		if e.steer_flipped():
+			return true
+	return false
+
+func _effect_rotation_locked() -> bool:
+	for e in _live_for(active_slot):
+		if e.rotation_locked():
+			return true
+	return false
+
+func _effect_dash_locked() -> bool:
+	for e in _live_for(active_slot):
+		if e.dash_locked():
+			return true
+	return false
+
+func _effect_soft_drop_locked() -> bool:
+	for e in _live_for(active_slot):
+		if e.soft_drop_locked():
+			return true
+	return false
+
+func _effect_brick_scale() -> float:
+	for e in _live_for(active_slot):
+		var sc: float = e.brick_scale()
+		if not is_equal_approx(sc, 1.0):
+			return sc
+	return 1.0
+
+func _effect_spawn_index(rolled: int) -> int:
+	for e in _live_for(active_slot):
+		var idx: int = e.spawn_index_override()
+		if idx >= 0 and idx < GameSettings.BRICKS.size():
+			return idx
+	return rolled
 
 # --- HUD -------------------------------------------------------------------
 
@@ -1078,12 +1413,32 @@ func _refresh_hud() -> void:
 	var slots: Array[Dictionary] = []
 	for i in range(lives.size()):
 		var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[i]
+		var tags: Array[String] = []
+		for e in _live_for(i):
+			var tag: String = e.hud_tag()
+			if tag != "":
+				tags.append(tag)
 		slots.append({
 			"name": cfg["name"],
 			"color": _slot_color(i),
 			"lives": lives[i],
+			"charge": charge[i] if i < charge.size() else 0,
+			"held_self": held_self[i] if i < held_self.size() else "",
+			"held_opponent": held_opponent[i] if i < held_opponent.size() else "",
+			"cast_label": cfg.get("cast_label", ""),
+			"tags": tags,
 		})
 	hud.slots = slots
+	hud.charge_max = CHARGE_TO_SKILL
+	var hexes: Array[Dictionary] = []
+	for e in queued_effects:
+		hexes.append({
+			"title": TowerSkillCatalog.title_of(e.id),
+			"from": GameSettings.PLAYER_CONFIGS[e.caster]["name"],
+			"to": GameSettings.PLAYER_CONFIGS[e.target]["name"],
+			"color": _slot_color(e.caster),
+		})
+	hud.hexes = hexes
 	hud.max_lives = START_LIVES
 	hud.active_slot = active_slot
 	hud.waiting = (state != "piloting")
@@ -1106,12 +1461,13 @@ func _controls_text() -> String:
 	# steer label spelled out again: the column gives 196px at font 15, and
 	# P2's "Up + Left / Right   dash a whole block" measures 266. This form's
 	# widest player is 178.
-	return "%s   half a block\n%s + a direction   a block\n%s / %s   rotate\n%s   fall faster" % [
+	return "%s   half a block\n%s + a direction   a block\n%s / %s   rotate\n%s   fall faster\n%s   skills" % [
 		cfg["steer_label"],
 		cfg["confirm_label"],
 		OS.get_keycode_string(cfg["skill_opponent"]),
 		OS.get_keycode_string(cfg["skill_self"]),
 		OS.get_keycode_string(cfg["down"]),
+		cfg.get("cast_label", ""),
 	]
 
 # --- Foreground ------------------------------------------------------------
@@ -1127,6 +1483,8 @@ func _draw() -> void:
 	_draw_outcrop(half_w)
 	_draw_drop_guide(half_w)
 	_draw_dash_ghost()
+	for e in active_effects:
+		e.draw_under()
 
 func _draw_play_column(top: float, half_w: float) -> void:
 	var reach: float = half_w + AIM_BOUND_CELLS * CELL

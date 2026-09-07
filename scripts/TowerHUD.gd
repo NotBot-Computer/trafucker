@@ -65,6 +65,23 @@ const PIP_EMPTY_ALPHA := 0.22
 const NEXT_H := 124.0
 const PANEL_PAD := 14.0
 
+# The two skill slots on a card, right-hand side: a self slot and an opponent
+# slot, each a small square the glyph sits in, with the cast key under it.
+# The disc colours are Don't Crash's own (SKILL_ART_BRIEF: self on green,
+# opponent on red) so a player coming from the other mode reads them cold.
+const SLOT_SIZE := 28.0
+const SLOT_GAP := 8.0
+const SLOT_EMPTY := Color(1.0, 1.0, 1.0, 0.10)
+const SLOT_SELF := Color(0.32, 0.82, 0.42, 0.95)
+const SLOT_OPPONENT := Color(0.92, 0.28, 0.28, 0.95)
+const SLOT_RING := Color(1.0, 1.0, 1.0, 0.85)
+# The charge bar runs along the top edge of the card in the player's colour,
+# in CHARGE_TO_SKILL segments so "one more clean drop" is readable at a glance.
+const CHARGE_H := 3.0
+const CHARGE_EMPTY := Color(1.0, 1.0, 1.0, 0.10)
+const TAG_TEXT := Color(1.0, 0.86, 0.45, 0.95)
+const HEX_TEXT := Color(1.0, 1.0, 1.0, 0.82)
+
 const MESSAGE_HOLD := 1.6
 const MESSAGE_FADE := 0.7
 
@@ -94,6 +111,12 @@ var waiting: bool = false # true between the drop and the next turn, when nobody
 var next_slot: int = 0
 var next_index: int = 0
 var controls: String = ""
+# Skills. charge_max is TowerMode.CHARGE_TO_SKILL; each slot dict also carries
+# charge / held_self / held_opponent / cast_label / tags (see _refresh_hud).
+# `hexes` are opponent skills cast and waiting for their target's turn —
+# listed under the banner so the whole table can see what is coming.
+var charge_max: int = 2
+var hexes: Array[Dictionary] = [] # {title, from, to, color}
 
 var _message: String = ""
 var _message_color: Color = Color.WHITE
@@ -159,6 +182,7 @@ func _draw() -> void:
 	_draw_next(font, right_x)
 	_draw_controls(font, right_x)
 	_draw_turn_banner(font)
+	_draw_hexes(font)
 	_draw_message(font)
 
 func _draw_card(font: Font, i: int) -> void:
@@ -184,6 +208,16 @@ func _draw_card(font: Font, i: int) -> void:
 	)
 	if not alive:
 		draw_string(font, Vector2(tx + 48.0, y + 30.0), "OUT", HORIZONTAL_ALIGNMENT_LEFT, COL_W, 15, OUT_TEXT)
+	elif not slot.get("tags", []).is_empty():
+		# What is being done to this player right now, in the skill's own
+		# word. One fits between the name and the slots; more than one is
+		# joined and clipped, which is the honest amount of room there is.
+		var tags: Array = slot["tags"]
+		draw_string(font, Vector2(tx + 48.0, y + 30.0), " · ".join(tags), HORIZONTAL_ALIGNMENT_LEFT, 74.0, 12, TAG_TEXT)
+
+	if alive:
+		_draw_charge(slot, y, color)
+		_draw_slots(font, slot, y)
 
 	# Lives as pips rather than a number — from across a couch, "two left"
 	# should not need reading. The pip is Don't Crash's heart, re-hued into
@@ -211,6 +245,48 @@ func _draw_pip(tex: Texture2D, at: Vector2, base: Vector2, scale_mult: float, al
 	var pip: Vector2 = base * scale_mult
 	draw_texture_rect(tex, Rect2(at - pip * 0.5, pip), false, Color(1.0, 1.0, 1.0, alpha))
 
+# Clean placements toward the next skill, as segments along the card's top
+# edge. Inside the card rather than a bar of its own: it is a minor readout
+# and the card is already the thing a player's eye goes to for their state.
+func _draw_charge(slot: Dictionary, y: float, color: Color) -> void:
+	var x0: float = COL_MARGIN + STRIPE_W
+	var w: float = COL_W - STRIPE_W
+	var n: int = maxi(1, charge_max)
+	var have: int = int(slot.get("charge", 0))
+	var seg: float = (w - float(n - 1) * 2.0) / float(n)
+	for i in range(n):
+		var r := Rect2(x0 + float(i) * (seg + 2.0), y + 2.0, seg, CHARGE_H)
+		draw_rect(r, Color(color.r, color.g, color.b, 0.9) if i < have else CHARGE_EMPTY, true)
+
+# The two skill slots, stacked at the card's right edge with their cast keys
+# underneath. An empty slot is a faint square so the space reads as "nothing
+# here yet" rather than as nothing; a full one is the glyph on its disc.
+func _draw_slots(font: Font, slot: Dictionary, y: float) -> void:
+	var right: float = COL_MARGIN + COL_W - PANEL_PAD
+	var sy: float = y + (CARD_H - SLOT_SIZE) * 0.5 - 4.0
+	var keys: PackedStringArray = str(slot.get("cast_label", "")).split("/")
+	var entries := [
+		[right - SLOT_SIZE * 2.0 - SLOT_GAP, slot.get("held_self", ""), SLOT_SELF, keys[0].strip_edges() if keys.size() > 0 else ""],
+		[right - SLOT_SIZE, slot.get("held_opponent", ""), SLOT_OPPONENT, keys[1].strip_edges() if keys.size() > 1 else ""],
+	]
+	for entry in entries:
+		var sx: float = entry[0]
+		var id: String = entry[1]
+		var disc: Color = entry[2]
+		var key: String = entry[3]
+		var box := Rect2(sx, sy, SLOT_SIZE, SLOT_SIZE)
+		if id == "":
+			draw_rect(box, SLOT_EMPTY, false, 1.0)
+		else:
+			var c: Vector2 = box.get_center()
+			draw_circle(c, SLOT_SIZE * 0.5, disc)
+			draw_arc(c, SLOT_SIZE * 0.5 - 0.5, 0.0, TAU, 24, SLOT_RING, 1.5)
+			var glyph: Texture2D = TowerSkillCatalog.glyph_of(id)
+			if glyph != null:
+				var g: float = SLOT_SIZE * 0.68
+				draw_texture_rect(glyph, Rect2(c - Vector2(g, g) * 0.5, Vector2(g, g)), false)
+		draw_string(font, Vector2(sx, sy + SLOT_SIZE + 12.0), key, HORIZONTAL_ALIGNMENT_CENTER, SLOT_SIZE, 10, LABEL_TEXT)
+
 
 func _draw_next(font: Font, x: float) -> void:
 	var data: Dictionary = GameSettings.BRICKS[next_index]
@@ -234,7 +310,8 @@ func _draw_controls(font: Font, x: float) -> void:
 	if controls == "" or slots.is_empty():
 		return
 	var y: float = CARDS_Y + NEXT_H + 26.0
-	draw_rect(Rect2(x, y - 24.0, COL_W, 132.0), PANEL_BG, true)
+	var lines: int = controls.split("\n").size()
+	draw_rect(Rect2(x, y - 24.0, COL_W, 44.0 + 22.0 * float(lines)), PANEL_BG, true)
 	draw_string(font, Vector2(x + PANEL_PAD, y), "YOUR KEYS", HORIZONTAL_ALIGNMENT_LEFT, COL_W, 14, LABEL_TEXT)
 	# One line per action: the column is too narrow for the single-line form,
 	# and this is the only place a player can look up their own bindings.
@@ -264,6 +341,22 @@ func _draw_turn_banner(font: Font) -> void:
 		font, Vector2(COL_MARGIN + PANEL_PAD, y), "%s — YOUR BRICK" % slot["name"],
 		HORIZONTAL_ALIGNMENT_LEFT, COL_W, 20, slot["color"]
 	)
+
+# Opponent skills in flight: cast, and waiting for their target's next turn.
+# Under the banner, so the player about to receive one sees it coming while
+# they wait — a hex nobody could see would just read as the game glitching.
+func _draw_hexes(font: Font) -> void:
+	if hexes.is_empty() or slots.is_empty():
+		return
+	var y: float = CARDS_Y + float(slots.size()) * (CARD_H + CARD_GAP) + 20.0 + 24.0
+	draw_rect(Rect2(COL_MARGIN, y, COL_W, 10.0 + 20.0 * float(hexes.size())), PANEL_BG, true)
+	var line: float = y + 18.0
+	for h: Dictionary in hexes:
+		var c: Color = h["color"]
+		draw_rect(Rect2(COL_MARGIN, line - 12.0, STRIPE_W, 16.0), c, true)
+		draw_string(font, Vector2(COL_MARGIN + PANEL_PAD, line), "%s → %s   %s" % [h["from"], h["to"], h["title"]],
+			HORIZONTAL_ALIGNMENT_LEFT, COL_W - PANEL_PAD, 13, HEX_TEXT)
+		line += 20.0
 
 func _draw_message(font: Font) -> void:
 	if _message_timer <= 0.0 or _message == "":

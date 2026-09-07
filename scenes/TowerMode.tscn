@@ -1,10 +1,12 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/TowerMode.gd" id="1_tower"]
 [ext_resource type="Script" path="res://scripts/TowerHUD.gd" id="2_tower_hud"]
 [ext_resource type="Script" path="res://scripts/TowerBackground.gd" id="3_tower_bg"]
 [ext_resource type="Script" path="res://scripts/TowerGround.gd" id="4_tower_ground"]
 [ext_resource type="Script" path="res://scripts/Countdown.gd" id="5_countdown"]
+[ext_resource type="Script" path="res://scripts/tower_skills/TowerSkillOverlay.gd" id="6_skill_overlay"]
+[ext_resource type="Script" path="res://scripts/tower_skills/TowerSkillScreen.gd" id="7_skill_screen"]
 
 [node name="TowerMode" type="Node2D"]
 script = ExtResource("1_tower")
@@ -30,7 +32,15 @@ script = ExtResource("3_tower_bg")
 [node name="Ground" type="Node2D" parent="Foreground"]
 script = ExtResource("4_tower_ground")
 
+[node name="SkillOverlay" type="Node2D" parent="Foreground"]
+script = ExtResource("6_skill_overlay")
+
 [node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="SkillScreen" type="Control" parent="HUD"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("7_skill_screen")
 
 [node name="Board" type="Control" parent="HUD"]
 anchor_right = 1.0

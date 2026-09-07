@@ -317,17 +317,22 @@ const TRAFFIC_KINDS: Array[Dictionary] = [
 # the game. Don't Crash does not read it.
 # skill_opponent/skill_self are the two skill-choice-pickup buttons (see
 # PlayerBoard.gd) — deliberately separate keys from steering, not reused
-# left/right, since a skill choice never pauses driving. This project targets
+# left/right, since a skill choice never pauses driving. `cast_self` /
+# `cast_opponent` are Pile Up's two skill keys — that mode already spends
+# skill_self/skill_opponent on rotation — placed on the row under each
+# player's own cluster (Z/X under A/S, V/B under F/G) or beside it (N/M left
+# of P2's comma, ;/' right of P4's L), all keys nothing else in the project
+# reads. This project targets
 # PS5 eventually (steering -> stick, skill_opponent/self -> a pair of
 # shoulder/face buttons), so these keyboard bindings are just a placeholder
 # stand-in and don't need to be especially ergonomic — chosen to flank each
 # player's own confirm key on the keyboard (Q/W/E, ,/Up/., R/T/Y, U/I/O) only
 # as a mnemonic, not because that positioning matters long-term.
 const PLAYER_CONFIGS: Array[Dictionary] = [
-	{"name": "P1", "left": KEY_A, "right": KEY_D, "down": KEY_S, "confirm": KEY_W, "skill_opponent": KEY_Q, "skill_self": KEY_E, "steer_label": "A / D", "confirm_label": "W"},
-	{"name": "P2", "left": KEY_LEFT, "right": KEY_RIGHT, "down": KEY_DOWN, "confirm": KEY_UP, "skill_opponent": KEY_COMMA, "skill_self": KEY_PERIOD, "steer_label": "Left / Right", "confirm_label": "Up"},
-	{"name": "P3", "left": KEY_F, "right": KEY_H, "down": KEY_G, "confirm": KEY_T, "skill_opponent": KEY_R, "skill_self": KEY_Y, "steer_label": "F / H", "confirm_label": "T"},
-	{"name": "P4", "left": KEY_J, "right": KEY_L, "down": KEY_K, "confirm": KEY_I, "skill_opponent": KEY_U, "skill_self": KEY_O, "steer_label": "J / L", "confirm_label": "I"},
+	{"name": "P1", "left": KEY_A, "right": KEY_D, "down": KEY_S, "confirm": KEY_W, "skill_opponent": KEY_Q, "skill_self": KEY_E, "cast_self": KEY_Z, "cast_opponent": KEY_X, "steer_label": "A / D", "confirm_label": "W", "cast_label": "Z / X"},
+	{"name": "P2", "left": KEY_LEFT, "right": KEY_RIGHT, "down": KEY_DOWN, "confirm": KEY_UP, "skill_opponent": KEY_COMMA, "skill_self": KEY_PERIOD, "cast_self": KEY_N, "cast_opponent": KEY_M, "steer_label": "Left / Right", "confirm_label": "Up", "cast_label": "N / M"},
+	{"name": "P3", "left": KEY_F, "right": KEY_H, "down": KEY_G, "confirm": KEY_T, "skill_opponent": KEY_R, "skill_self": KEY_Y, "cast_self": KEY_V, "cast_opponent": KEY_B, "steer_label": "F / H", "confirm_label": "T", "cast_label": "V / B"},
+	{"name": "P4", "left": KEY_J, "right": KEY_L, "down": KEY_K, "confirm": KEY_I, "skill_opponent": KEY_U, "skill_self": KEY_O, "cast_self": KEY_SEMICOLON, "cast_opponent": KEY_APOSTROPHE, "steer_label": "J / L", "confirm_label": "I", "cast_label": "; / '"},
 ]
 
 
