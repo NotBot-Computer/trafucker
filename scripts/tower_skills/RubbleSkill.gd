@@ -48,6 +48,17 @@ extends TowerSkill
 ## load landing at speed on a leaning top still knocks things off. That risk
 ## is the sting; the coin toss was not.
 ##
+## Measured, on a throwaway harness with the same random careful aim for
+## both arms: 48 casts against 48 control turns. The rubble came down 48 of
+## 48 times (2 of them after a wait for the held brick), stayed on the tower
+## 21 times, left with a collapse 23, left alone 4. Turns that cost a life
+## went from 45% to 58% at the same 0.81 bricks per fall as a plain landing
+## — which is to say the skill is worth exactly one extra landing on the
+## target's clock, no more. An adversarial pass that soft-dropped straight
+## into the rubble's column every time produced 0 spawn overlaps and 0 lives
+## lost to the rubble alone. Those are the numbers to re-measure if
+## SUPPORT_SPAN_CELLS, SUPPORT_MARGIN_CELLS or DROP_CELLS ever move.
+##
 ## Timing. The target's brick spawns seven cells above the stack and takes
 ## about 2.5s to descend on its own, 0.62s under a soft drop. The rubble is
 ## telegraphed for WARN_TIME (a ghost of it sinks onto the drop point, a
