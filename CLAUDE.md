@@ -61,6 +61,11 @@ And one for Don't Crash's **traffic fleet**, which force-spawns 4000 vehicles th
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/FleetProbe.tscn
 ```
 
+And one for Pile Up's **skills** (`scripts/tower_skills/`), the counterpart of `SkillProbe` for the tower: it plays real turns in a three-player match and runs every catalogued skill through three lifecycles — runs its turns out, cut mid-effect by `_clear_skill_effects()`, cut by `_start_match()` — demanding the mode come back identical each time (nothing live or queued, every descent multiplier at 1.0, no control flipped or locked, camera zoom / `Engine.time_scale` / the space's gravity untouched, no node left under the mode, its Foreground or its HUD). It also checks the plumbing: every catalogue row is well-formed, a charge grants after `CHARGE_TO_SKILL` clean drops, and a cast outside the caster's own piloting is refused. Run it after touching anything under `scripts/tower_skills/` or the `# --- Skills` section of `TowerMode.gd`. Like `SkillProbe` it cannot see drawing, so a skill whose visuals are broken passes it:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/TowerSkillProbe.tscn
+```
+
 Adding or replacing art means running Godot's importer first — a `preload()` of an unimported PNG is a parse error, so every check above fails misleadingly until this has run:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --import

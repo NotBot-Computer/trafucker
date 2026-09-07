@@ -46,6 +46,24 @@ Your brick starts falling the moment it appears — there is no drop button, jus
 
 You can walk a brick up to two blocks past the platform edge if you want to — that is the whole risk/reward of the mode, and yes, you can walk one clean off the side and lose it.
 
+Skills are earned by building. Every **clean placement** — your brick landed and nothing fell — fills one segment of the charge bar along the top of your card; two of them hand you a random skill into whichever of your two slots is empty. The green slot is a **self** skill and the red one is a **hex**, each on its own key (shown under the slot), and both can only be cast **while your own brick is in the air**. A self skill goes off on the spot. A hex waits for its target's next turn and lands the moment their brick appears — the tower is shared and a turn's falls are charged to whoever is on the clock, so a hex that hit during *your* turn would only ever hurt you. Hexes in flight are listed under the turn banner, so the player about to receive one sees it coming.
+
+The nine skills, by pack (`scripts/tower_skills/packs/`):
+
+| | Skill | Kind | What it does |
+|---|---|---|---|
+| A | **CEMENT** | self | Your brick sets to whatever it touches. Hang it off the edge — it stays. |
+| A | **TREMOR** | hex | The ground shakes on their turn — hardest the instant their brick lands. Whatever is wobbly finds out. |
+| A | **PETRIFY** | self | The tower is stone until your turn ends. Whatever it was going to drop, it drops on the next player's clock. |
+| B | **PLUMB LINE** | self | Your brick falls at half speed with a line to exactly where it will land — any corner over thin air shows red. |
+| B | **CROSSWIND** | hex | A wind gusts across their next turn, shoving the brick a whole block sideways every gust — and it may turn on them. |
+| B | **NIGHTFALL** | hex | Their next brick falls in the dark: only a lantern around it, the tower unseen but for flickers, until the last few blocks. |
+| C | **TAILOR** | self | Your NEXT brick is cut to fit the top of the tower — whichever shape fills the gaps best, instead of the one on the card — with a ghost showing where it goes. |
+| C | **KEYSTONE** | hex | A brick is pulled out from under the top of the tower on their turn — whatever comes down is on them. |
+| C | **RUBBLE** | hex | A stray brick drops onto the tower at the start of their turn, a beat ahead of their own. It costs nothing if it bounces off — whatever it knocks off is on them, and whatever it leaves is theirs to build on. |
+
+A self skill and a hex are drawn with equal odds into whichever slot is empty; within a category every skill is equally likely.
+
 The bag holds nineteen shapes in two categories: the seven classic tetrominoes, and all twelve pentominoes. They are not equally likely — a classic turns up 10% of the time and a five-cell piece 2.5%, so roughly **seven bricks in ten are the shapes you already know** and the odd ones stay a thing that happens rather than the norm. `TowerMode.CLASSIC_BIAS` is the single number that sets that split.
 
 Coming up against the side of a taller part of the tower doesn't end your turn. You keep steering for as long as you like and can always back out of it — a turn ends when something is actually *underneath* the brick, and at no other time.

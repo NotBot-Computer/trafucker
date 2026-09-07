@@ -26,7 +26,8 @@ extends Node
 ##
 ## "Identical" means: nothing live, nothing queued, every descent multiplier
 ## back at 1.0, no control flipped or locked, brick_scale at 1.0, the camera's
-## zoom and Engine.time_scale untouched, the space's gravity untouched, and no
+## zoom and offset and Engine.time_scale untouched, the space's gravity
+## untouched, and no
 ## child node left under the mode, its Foreground or its HUD. Landed bricks
 ## are excluded from the node count on purpose: the tower is the shared board
 ## and a skill may leave a mark on it (TowerSkill's header).
@@ -196,6 +197,10 @@ func _snapshot() -> Dictionary:
 		"soft_locked": _mode._effect_soft_drop_locked(),
 		"scale": _mode._effect_brick_scale(),
 		"zoom": _mode.camera.zoom.x,
+		# The offset is the sanctioned lever for a shake, and exactly the kind
+		# of thing a skill puts back from a tick() that never gets its last
+		# frame when the effect is cut. Pack C's keystone was the first to use it.
+		"cam_offset": _mode.camera.offset,
 		"time_scale": Engine.time_scale,
 		"gravity_mag": PhysicsServer2D.area_get_param(space, PhysicsServer2D.AREA_PARAM_GRAVITY),
 		"live": _mode.active_effects.size(),
@@ -295,6 +300,8 @@ func _run_case(skill_id: String, label: String, cut_at: float, restart: bool) ->
 			notes.append("%s left true" % k)
 	if not is_equal_approx(float(after["zoom"]), float(before["zoom"])):
 		notes.append("camera zoom left at %.3f, was %.3f" % [after["zoom"], before["zoom"]])
+	if not (after["cam_offset"] as Vector2).is_equal_approx(before["cam_offset"] as Vector2):
+		notes.append("camera offset left at %s" % [after["cam_offset"]])
 	if not is_equal_approx(float(after["time_scale"]), float(before["time_scale"])):
 		notes.append("Engine.time_scale left at %.3f" % float(after["time_scale"]))
 	if not is_equal_approx(float(after["gravity_mag"]), float(before["gravity_mag"])):
