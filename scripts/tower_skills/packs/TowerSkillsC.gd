@@ -25,9 +25,9 @@ extends RefCounted
 ## This pack's theme is the tower and the draw: which brick a player gets,
 ## and what the tower is when they get it. Tailor takes the next brick away
 ## from the dice; Keystone takes a brick out of the tower on the target's
-## clock; Mortar freezes the tower for the caster's turn and hands the load to
-## the next player's. None of them touch a brick's mass, friction or gravity,
-## the controls, the descent speed or the camera's zoom — those are the other
+## clock; Rubble drops one the target never drew onto it, on that same clock.
+## None of them freeze a brick or touch its mass, friction or gravity, the
+## controls, the descent speed or the camera's zoom — those are the other
 ## packs' ground.
 
 const SKILLS := {
@@ -45,11 +45,11 @@ const SKILLS := {
 		"script": preload("res://scripts/tower_skills/KeystoneSkill.gd"),
 		"glyph": preload("res://sprites/skills/tower_keystone.png"),
 	},
-	"mortar": {
-		"category": "self",
-		"title": "MORTAR",
-		"blurb": "The tower sets solid for the rest of your turn — nothing you land on can topple. It cures when your turn ends, on the next player's clock.",
-		"script": preload("res://scripts/tower_skills/MortarSkill.gd"),
-		"glyph": preload("res://sprites/skills/tower_mortar.png"),
+	"rubble": {
+		"category": "opponent",
+		"title": "RUBBLE",
+		"blurb": "A stray brick drops onto the tower at the start of their turn, a beat ahead of their own. It costs nothing if it bounces off — whatever it knocks off is on them, and whatever it leaves is theirs to build on.",
+		"script": preload("res://scripts/tower_skills/RubbleSkill.gd"),
+		"glyph": preload("res://sprites/skills/tower_rubble.png"),
 	},
 }

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bphfj733txti3"
-path="res://.godot/imported/tower_mortar.png-717bdcd77bd399a026843319b5a776df.ctex"
+uid="uid://cqqhi8n4x1wvy"
+path="res://.godot/imported/tower_rubble.png-e823dbe4d7375cceaf29ce80450e2606.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://sprites/skills/tower_mortar.png"
-dest_files=["res://.godot/imported/tower_mortar.png-717bdcd77bd399a026843319b5a776df.ctex"]
+source_file="res://sprites/skills/tower_rubble.png"
+dest_files=["res://.godot/imported/tower_rubble.png-e823dbe4d7375cceaf29ce80450e2606.ctex"]
 
 [params]
 

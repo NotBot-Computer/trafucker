@@ -2,8 +2,8 @@
 
 Picked up by scripts/dev/make_tower_skill_icons.py (see its header): each
 entry is `tower_<id>: (rows, palette)`, 16x16, "." transparent. The HUD draws
-self skills on a green disc and opponent skills on a red one, so tailor and
-mortar (self) avoid green and keystone (opponent) avoids red.
+self skills on a green disc and opponent skills on a red one, so tailor
+(self) avoids green and keystone and rubble (opponent) avoid red.
 """
 
 ICONS = {
@@ -61,29 +61,32 @@ ICONS = {
             "w": (250, 244, 230, 255),
         },
     ),
-    # Mortar: three courses of grey brick set in pale mortar.
-    "tower_mortar": (
+    # Rubble: a chunk tumbling out of the sky, its shadow already on the
+    # top course of the tower below.
+    "tower_rubble": (
         [
+            "..w.......w.....",
+            "...w.AAA.w......",
+            ".....AAAAA......",
+            "......AAAA......",
+            ".......AA.......",
             "................",
             "................",
+            "....ssssssss....",
+            "...ssssssssss...",
+            ".GGGGwGGGGGwGGG.",
+            ".GGGGwGGGGGwGGG.",
             ".wwwwwwwwwwwwww.",
-            ".wGGGwGGGGwGGGw.",
-            ".wGGGwGGGGwGGGw.",
-            ".wwwwwwwwwwwwww.",
-            ".wGGGGwGGGwGGGw.",
-            ".wGGGGwGGGwGGGw.",
-            ".wwwwwwwwwwwwww.",
-            ".wGGGwGGGGwGGGw.",
-            ".wGGGwGGGGwGGGw.",
-            ".wwwwwwwwwwwwww.",
-            "................",
-            "................",
+            ".GGwGGGGGwGGGGG.",
+            ".GGwGGGGGwGGGGG.",
             "................",
             "................",
         ],
         {
-            "G": (118, 122, 136, 255),
+            "A": (236, 176, 74, 255),
             "w": (236, 237, 242, 255),
+            "s": (34, 36, 48, 230),
+            "G": (118, 122, 136, 255),
         },
     ),
 }
