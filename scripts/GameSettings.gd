@@ -361,105 +361,109 @@ const PLAYER_CONFIGS: Array[Dictionary] = [
 # landing flash) — same role, and same caveat about not updating itself, as
 # PLAYER_SKINS' own "color" entry.
 #
-# Note the mix: twelve of the nineteen are five-cell pieces, so about two
-# thirds of the bricks dropped onto a five-cell platform are pentominoes.
-# _begin_turn() picks uniformly from this array, so this ordering carries no
-# weight — if the balance ever needs tuning, that draw is the place, not here.
+# `classic` is the brick's *category*, and it is the one field here that is
+# about the draw rather than about the brick. True for the seven Tetris
+# pieces, false for the twelve pentominoes. The draw is not uniform: a
+# classic is TowerMode.CLASSIC_BIAS times likelier than an odd one, per
+# brick, because a uniform draw over nineteen shapes made two bricks in three
+# a five-cell piece and the odd ones stopped reading as odd. The split is
+# stated in one place — that constant — and this flag is only the input to
+# it, so the ordering of this array still carries no weight.
 const BRICKS: Array[Dictionary] = [
 	# --- tetrominoes -------------------------------------------------------
 	{
-		"name": "I", "cols": 1, "rows": 4, "color": Color(0.00, 0.85, 1.00),
+		"name": "I", "classic": true, "cols": 1, "rows": 4, "color": Color(0.00, 0.85, 1.00),
 		"texture": preload("res://sprites/blocks/piece_i.png"),
 		"boxes": [Rect2(0, 0, 1, 4)],
 	},
 	{
-		"name": "O", "cols": 2, "rows": 2, "color": Color(1.00, 0.96, 0.10),
+		"name": "O", "classic": true, "cols": 2, "rows": 2, "color": Color(1.00, 0.96, 0.10),
 		"texture": preload("res://sprites/blocks/piece_o.png"),
 		"boxes": [Rect2(0, 0, 2, 2)],
 	},
 	{
-		"name": "S", "cols": 3, "rows": 2, "color": Color(0.93, 0.09, 0.14),
+		"name": "S", "classic": true, "cols": 3, "rows": 2, "color": Color(0.93, 0.09, 0.14),
 		"texture": preload("res://sprites/blocks/piece_s.png"),
 		"boxes": [Rect2(1, 0, 2, 1), Rect2(0, 1, 2, 1)],
 	},
 	{
-		"name": "Z", "cols": 3, "rows": 2, "color": Color(0.12, 0.74, 0.27),
+		"name": "Z", "classic": true, "cols": 3, "rows": 2, "color": Color(0.12, 0.74, 0.27),
 		"texture": preload("res://sprites/blocks/piece_z.png"),
 		"boxes": [Rect2(0, 0, 2, 1), Rect2(1, 1, 2, 1)],
 	},
 	{
-		"name": "L", "cols": 2, "rows": 3, "color": Color(1.00, 0.53, 0.00),
+		"name": "L", "classic": true, "cols": 2, "rows": 3, "color": Color(1.00, 0.53, 0.00),
 		"texture": preload("res://sprites/blocks/piece_l.png"),
 		"boxes": [Rect2(0, 0, 1, 3), Rect2(1, 2, 1, 1)],
 	},
 	{
-		"name": "J", "cols": 2, "rows": 3, "color": Color(0.99, 0.41, 0.73),
+		"name": "J", "classic": true, "cols": 2, "rows": 3, "color": Color(0.99, 0.41, 0.73),
 		"texture": preload("res://sprites/blocks/piece_j.png"),
 		"boxes": [Rect2(1, 0, 1, 3), Rect2(0, 2, 1, 1)],
 	},
 	{
-		"name": "T", "cols": 3, "rows": 2, "color": Color(0.61, 0.13, 0.64),
+		"name": "T", "classic": true, "cols": 3, "rows": 2, "color": Color(0.61, 0.13, 0.64),
 		"texture": preload("res://sprites/blocks/piece_t.png"),
 		"boxes": [Rect2(0, 0, 3, 1), Rect2(1, 1, 1, 1)],
 	},
 	# --- pentominoes -------------------------------------------------------
 	{
-		"name": "L5", "cols": 2, "rows": 4, "color": Color(1.00, 0.83, 0.01),
+		"name": "L5", "classic": false, "cols": 2, "rows": 4, "color": Color(1.00, 0.83, 0.01),
 		"texture": preload("res://sprites/blocks/piece_l5.png"),
 		"boxes": [Rect2(0, 0, 1, 4), Rect2(1, 3, 1, 1)],
 	},
 	{
-		"name": "N", "cols": 2, "rows": 4, "color": Color(0.99, 0.24, 0.75),
+		"name": "N", "classic": false, "cols": 2, "rows": 4, "color": Color(0.99, 0.24, 0.75),
 		"texture": preload("res://sprites/blocks/piece_n.png"),
 		"boxes": [Rect2(1, 1, 1, 3), Rect2(0, 0, 1, 2)],
 	},
 	{
-		"name": "I5", "cols": 1, "rows": 5, "color": Color(0.01, 0.61, 0.27),
+		"name": "I5", "classic": false, "cols": 1, "rows": 5, "color": Color(0.01, 0.61, 0.27),
 		"texture": preload("res://sprites/blocks/piece_i5.png"),
 		"boxes": [Rect2(0, 0, 1, 5)],
 	},
 	{
-		"name": "Y", "cols": 2, "rows": 4, "color": Color(0.36, 0.90, 0.06),
+		"name": "Y", "classic": false, "cols": 2, "rows": 4, "color": Color(0.36, 0.90, 0.06),
 		"texture": preload("res://sprites/blocks/piece_y.png"),
 		"boxes": [Rect2(0, 0, 1, 4), Rect2(1, 1, 1, 1)],
 	},
 	{
-		"name": "F", "cols": 3, "rows": 3, "color": Color(0.00, 0.70, 0.96),
+		"name": "F", "classic": false, "cols": 3, "rows": 3, "color": Color(0.00, 0.70, 0.96),
 		"texture": preload("res://sprites/blocks/piece_f.png"),
 		"boxes": [Rect2(0, 1, 3, 1), Rect2(1, 0, 1, 1), Rect2(0, 2, 1, 1)],
 	},
 	{
-		"name": "V", "cols": 3, "rows": 3, "color": Color(0.95, 0.07, 0.17),
+		"name": "V", "classic": false, "cols": 3, "rows": 3, "color": Color(0.95, 0.07, 0.17),
 		"texture": preload("res://sprites/blocks/piece_v.png"),
 		"boxes": [Rect2(0, 2, 3, 1), Rect2(2, 0, 1, 2)],
 	},
 	{
-		"name": "U", "cols": 3, "rows": 2, "color": Color(1.00, 0.47, 0.00),
+		"name": "U", "classic": false, "cols": 3, "rows": 2, "color": Color(1.00, 0.47, 0.00),
 		"texture": preload("res://sprites/blocks/piece_u.png"),
 		"boxes": [Rect2(0, 0, 3, 1), Rect2(0, 1, 1, 1), Rect2(2, 1, 1, 1)],
 	},
 	{
-		"name": "P", "cols": 2, "rows": 3, "color": Color(0.09, 0.49, 0.99),
+		"name": "P", "classic": false, "cols": 2, "rows": 3, "color": Color(0.09, 0.49, 0.99),
 		"texture": preload("res://sprites/blocks/piece_p.png"),
 		"boxes": [Rect2(0, 0, 2, 2), Rect2(1, 2, 1, 1)],
 	},
 	{
-		"name": "T5", "cols": 3, "rows": 3, "color": Color(0.00, 0.91, 1.00),
+		"name": "T5", "classic": false, "cols": 3, "rows": 3, "color": Color(0.00, 0.91, 1.00),
 		"texture": preload("res://sprites/blocks/piece_t5.png"),
 		"boxes": [Rect2(0, 2, 3, 1), Rect2(1, 0, 1, 2)],
 	},
 	{
-		"name": "Z5", "cols": 3, "rows": 3, "color": Color(0.01, 0.84, 0.86),
+		"name": "Z5", "classic": false, "cols": 3, "rows": 3, "color": Color(0.01, 0.84, 0.86),
 		"texture": preload("res://sprites/blocks/piece_z5.png"),
 		"boxes": [Rect2(0, 1, 3, 1), Rect2(2, 0, 1, 1), Rect2(0, 2, 1, 1)],
 	},
 	{
-		"name": "X", "cols": 3, "rows": 3, "color": Color(0.59, 0.16, 0.79),
+		"name": "X", "classic": false, "cols": 3, "rows": 3, "color": Color(0.59, 0.16, 0.79),
 		"texture": preload("res://sprites/blocks/piece_x.png"),
 		"boxes": [Rect2(0, 1, 3, 1), Rect2(1, 0, 1, 1), Rect2(1, 2, 1, 1)],
 	},
 	{
-		"name": "W", "cols": 3, "rows": 3, "color": Color(1.00, 0.51, 0.03),
+		"name": "W", "classic": false, "cols": 3, "rows": 3, "color": Color(1.00, 0.51, 0.03),
 		"texture": preload("res://sprites/blocks/piece_w.png"),
 		"boxes": [Rect2(0, 1, 2, 1), Rect2(1, 2, 2, 1), Rect2(0, 0, 1, 1)],
 	},

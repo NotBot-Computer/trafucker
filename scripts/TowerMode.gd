@@ -79,6 +79,23 @@ const PIECE_SCENE := preload("res://scenes/TowerPiece.tscn")
 # in play, so the tower kept scrolling out from under itself — that was fixed
 # here before there was a camera knob to fix it with.
 const CELL := 38.0
+
+# How much likelier a classic brick is than an odd one, per brick.
+#
+# GameSettings.BRICKS holds two categories — the seven Tetris pieces, flagged
+# `classic`, and the twelve pentominoes — and a uniform draw over all nineteen
+# made two bricks in three a five-cell piece. That is backwards: the odd
+# shapes are the surprise in this mode, and a surprise that arrives twice a
+# turn is just the game. At 4.0 the seven classics carry 7x4 = 28 of the 40
+# weight against the twelve odd ones' 12, so **70% of bricks are classic and
+# 30% are not** — 10% each for a classic, 2.5% each for an odd one, and about
+# one brick in three still something you have to think about.
+#
+# This is the only number that decides the mix; the pool itself is not
+# re-ordered or trimmed to change it, and every brick keeps a real chance of
+# turning up. 1.0 restores the uniform draw exactly.
+const CLASSIC_BIAS := 4.0
+
 const PLATFORM_CELLS := 5.0
 const PLATFORM_THICKNESS := 30.0 # the collision slab; the drawn outcrop runs much deeper
 
@@ -474,7 +491,7 @@ func _start_match() -> void:
 	cam_start_y = cam_y
 	camera.position = Vector2(0.0, cam_y)
 	backdrop.set_scroll(0.0)
-	next_index = randi() % GameSettings.BRICKS.size()
+	next_index = _next_brick()
 	overlay.visible = false
 	# Not just the toast: a pip left mid-pop by the last match would play out
 	# over this one's fresh row of three.
@@ -510,7 +527,7 @@ func _begin_turn() -> void:
 	var piece: TowerPiece = PIECE_SCENE.instantiate()
 	pieces.add_child(piece) # before setup(): it reaches its @onready Sprite2D
 	piece.setup(next_index, CELL, active_slot, _slot_color(active_slot))
-	next_index = randi() % GameSettings.BRICKS.size()
+	next_index = _next_brick()
 
 	aim_steps = 0
 	aim_x = 0.0
@@ -888,6 +905,21 @@ func _view_world() -> Vector2:
 # away; the guide to it is not.
 func _px(width: float) -> float:
 	return width / cam_zoom
+
+# One brick, drawn against CLASSIC_BIAS. Linear over nineteen entries, once a
+# turn — there is nothing here worth precomputing a table for, and a table
+# would be a second place for the split to be wrong.
+func _next_brick() -> int:
+	var total := 0.0
+	for b: Dictionary in GameSettings.BRICKS:
+		total += CLASSIC_BIAS if b["classic"] else 1.0
+	var pick: float = randf() * total
+	for i in range(GameSettings.BRICKS.size()):
+		pick -= CLASSIC_BIAS if GameSettings.BRICKS[i]["classic"] else 1.0
+		if pick < 0.0:
+			return i
+	# Only reachable if randf() returns exactly 1.0, which it does not.
+	return GameSettings.BRICKS.size() - 1
 
 func _camera_target() -> float:
 	var view_h: float = _view_world().y
