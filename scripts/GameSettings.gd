@@ -23,7 +23,13 @@ const TOWER_TEAMS := 1   # two teams on one tower, a shared life pool each
 const TOWER_COPILOT := 2 # two crews of two: one steers the brick, the other turns it
 const TOWER_COOP := 3    # everyone against the storm, building to a goal line
 const TOWER_RACE := 4    # two towers side by side, first team to the line
+const TOWER_RACE_SOLO := 5 # a tower per player, side by side, first one to the line
 var tower_variant: int = TOWER_FFA
+
+# Both races are hosted by TowerRace and share every race rule; they differ
+# only in who shares a tower — a team, or nobody.
+func tower_is_race(variant: int = tower_variant) -> bool:
+	return variant == TOWER_RACE or variant == TOWER_RACE_SOLO
 
 # The variant picker's rows, and the player counts each one is playable at.
 # `counts` is what PlayerSelect offers; a count missing here is not a quieter
@@ -35,9 +41,12 @@ var tower_variant: int = TOWER_FFA
 # another sit under TEAM MODES, asked for so the first screen reads as three
 # choices — alone, against each other in teams, together — rather than five.
 # Co-op is deliberately not in it: it is one team, and nobody plays against
-# anybody.
+# anybody. The plain RACE is the free-for-all version of TEAM RACE — every
+# player on a tower of their own — and sits on the top level beside the
+# free-for-all it is the race of.
 const TOWER_VARIANTS: Array[Dictionary] = [
 	{"id": TOWER_FFA, "group": "", "title": "FREE FOR ALL", "hint": "one tower, three lives each — drop a brick and it costs you", "counts": [2, 3, 4]},
+	{"id": TOWER_RACE_SOLO, "group": "", "title": "RACE", "hint": "a tower each, everyone at once — first to the line wins, and hexes hit the leader", "counts": [2, 3, 4]},
 	{"id": TOWER_TEAMS, "group": "teams", "title": "TEAMS", "hint": "one tower — a shared pool of lives per team, turns alternate sides", "counts": [3, 4]},
 	{"id": TOWER_COPILOT, "group": "teams", "title": "CO-PILOT", "hint": "two crews of two, one brick per crew — one of you steers it, the other turns it", "counts": [4]},
 	{"id": TOWER_COOP, "group": "", "title": "CO-OP: THE STORM", "hint": "everyone on one team — build to the goal line while the storm throws hexes", "counts": [1, 2, 3, 4]},
@@ -66,7 +75,7 @@ func tower_variant_info(variant: int = tower_variant) -> Dictionary:
 # the default turn order P1, P2, P3, P4 alternates the teams on its own.
 func tower_team_of(slot: int, variant: int = tower_variant) -> int:
 	match variant:
-		TOWER_FFA:
+		TOWER_FFA, TOWER_RACE_SOLO:
 			return slot
 		TOWER_COOP:
 			return 0
@@ -74,7 +83,7 @@ func tower_team_of(slot: int, variant: int = tower_variant) -> int:
 
 func tower_team_name(team: int, variant: int = tower_variant) -> String:
 	match variant:
-		TOWER_FFA:
+		TOWER_FFA, TOWER_RACE_SOLO:
 			return PLAYER_CONFIGS[team]["name"] if team < PLAYER_CONFIGS.size() else "?"
 		TOWER_COOP:
 			return "THE CREW"

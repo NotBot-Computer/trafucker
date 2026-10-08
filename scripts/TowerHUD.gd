@@ -73,6 +73,19 @@ const TEAM_HEAD_H := 54.0
 const TEAM_CARD_H := 58.0
 const TEAM_GAP := 12.0 # between one team's last card and the next team's header
 
+# The compact layout, for a view too narrow for two side columns — each tower
+# of a three- or four-player race gets 500 or 375px. Everything moves into one
+# strip across the top (name, lives, charge, skills, next brick) with two
+# short lines of keys and the incoming hexes under it. The strip is drop
+# headroom the full layout deliberately keeps clear (a banner there once hit a
+# vertical I), and it is affordable here only because a race tower's camera is
+# pulled back to RACE_VISIBLE_CELLS: the tallest brick spawns with its top
+# edge at about y=160 in the climbing shot, below the hex line's ~150.
+const COMPACT_BELOW := 700.0
+const STRIP_PAD := 8.0
+const STRIP_H := 76.0
+const STRIP_NEXT_W := 64.0
+
 # The two skill slots on a card, right-hand side: a self slot and an opponent
 # slot, each a small square the glyph sits in, with the cast key under it.
 # The disc colours are Don't Crash's own (SKILL_ART_BRIEF: self on green,
@@ -190,8 +203,15 @@ func tick(delta: float) -> void:
 	if animating:
 		queue_redraw()
 
+func is_compact() -> bool:
+	return size.x > 0.0 and size.x < COMPACT_BELOW
+
 func _draw() -> void:
 	var font: Font = ThemeDB.fallback_font
+	if is_compact():
+		_draw_compact(font)
+		_draw_message(font)
+		return
 	var right_x: float = size.x - COL_MARGIN - COL_W
 
 	draw_rect(Rect2(COL_MARGIN - 10.0, 16.0, COL_W + 20.0, 62.0), PANEL_BG, true)
@@ -216,6 +236,11 @@ func _draw_column(font: Font) -> float:
 			y += CARD_H + CARD_GAP
 		return y
 	for g: Dictionary in groups:
+		if g.get("plain", false):
+			for s: int in g["slots"]:
+				_draw_card(font, s, y, CARD_H, true)
+				y += CARD_H + CARD_GAP
+			continue
 		_draw_team_head(font, g, y)
 		y += TEAM_HEAD_H + 4.0
 		for s: int in g["slots"]:
@@ -223,6 +248,67 @@ func _draw_column(font: Font) -> float:
 			y += TEAM_CARD_H + 4.0
 		y += TEAM_GAP
 	return y
+
+# The whole HUD as one strip across the top of a narrow view — see
+# COMPACT_BELOW. Drawn for the player on the clock: in the only variant that
+# goes compact (the solo race, three or four towers) a tower has exactly one.
+func _draw_compact(font: Font) -> void:
+	if slots.is_empty():
+		return
+	var i: int = clampi(active_slot, 0, slots.size() - 1)
+	var slot: Dictionary = slots[i]
+	var color: Color = slot["color"]
+	var alive: bool = int(slot["lives"]) > 0
+	var x0: float = STRIP_PAD
+	var w: float = size.x - STRIP_PAD * 2.0
+	var y0: float = STRIP_PAD
+	draw_rect(Rect2(x0, y0, w, STRIP_H), CARD_BG_ACTIVE if alive and not waiting else CARD_BG, true)
+	draw_rect(Rect2(x0, y0, STRIPE_W, STRIP_H), color if alive else Color(color.r, color.g, color.b, 0.25), true)
+
+	var tx: float = x0 + STRIPE_W + PANEL_PAD
+	draw_string(font, Vector2(tx, y0 + 28.0), slot["name"], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE if alive else OUT_TEXT)
+	if not alive:
+		draw_string(font, Vector2(tx + 48.0, y0 + 28.0), "OUT", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, OUT_TEXT)
+	elif not slot.get("tags", []).is_empty():
+		var tags: Array = slot["tags"]
+		draw_string(font, Vector2(tx + 48.0, y0 + 28.0), " · ".join(tags), HORIZONTAL_ALIGNMENT_LEFT, 90.0, 12, TAG_TEXT)
+	_draw_pips(tx, y0 + STRIP_H - 20.0, color, int(slot["lives"]), int(slot.get("team", i)))
+
+	# The next brick in its own small box at the strip's right end, the skill
+	# slots just left of it.
+	var nb := Rect2(x0 + w - STRIP_NEXT_W - 6.0, y0 + 6.0, STRIP_NEXT_W, STRIP_H - 12.0)
+	draw_rect(nb, PANEL_BG, true)
+	var data: Dictionary = GameSettings.BRICKS[next_index]
+	var tex: Texture2D = data["texture"]
+	var tex_size: Vector2 = tex.get_size()
+	var avail: Vector2 = nb.size - Vector2(12.0, 12.0)
+	var s: float = minf(avail.x / tex_size.x, avail.y / tex_size.y)
+	var draw_size: Vector2 = tex_size * s
+	draw_texture_rect(tex, Rect2(nb.get_center() - draw_size * 0.5, draw_size), false, Color(1.0, 1.0, 1.0, 0.95))
+	var bc: Color = data["color"]
+	draw_rect(Rect2(nb.position.x, nb.end.y - 3.0, nb.size.x, 3.0), Color(bc.r, bc.g, bc.b, 0.85), true)
+	if alive:
+		_draw_charge(slot, x0 + STRIPE_W, w - STRIPE_W, y0, color)
+		_draw_slots(font, slot, nb.position.x - 10.0, y0, STRIP_H)
+
+	# Two short lines of keys, then whatever is on its way here. Indented past
+	# the race's divider, which covers the outer 6px of each view, and on a
+	# dark plate: light text straight on the backdrop vanishes into its clouds.
+	var y: float = y0 + STRIP_H + 16.0
+	var key_lines: int = controls.split("\n").size() if controls != "" else 0
+	var lines: int = key_lines + hexes.size()
+	if lines > 0:
+		draw_rect(Rect2(x0, y0 + STRIP_H + 2.0, w, 6.0 + 15.5 * float(lines)), PANEL_BG, true)
+	if controls != "":
+		for part: String in controls.split("\n"):
+			draw_string(font, Vector2(x0 + STRIPE_W + 4.0, y), part, HORIZONTAL_ALIGNMENT_LEFT, w, 12, DIM_TEXT)
+			y += 15.0
+	for h: Dictionary in hexes:
+		var c: Color = h["color"]
+		draw_rect(Rect2(x0, y - 11.0, STRIPE_W, 14.0), c, true)
+		draw_string(font, Vector2(x0 + STRIPE_W + 6.0, y), "%s from %s" % [h["title"], h["from"]],
+			HORIZONTAL_ALIGNMENT_LEFT, w, 12, HEX_TEXT)
+		y += 16.0
 
 # The team's name and its one row of lives — the pool both members spend.
 func _draw_team_head(font: Font, g: Dictionary, y: float) -> void:
@@ -268,8 +354,8 @@ func _draw_card(font: Font, i: int, y: float, h: float, with_pips: bool) -> void
 		draw_string(font, Vector2(tx + 48.0, name_y), " · ".join(tags), HORIZONTAL_ALIGNMENT_LEFT, 74.0, 12, TAG_TEXT)
 
 	if alive:
-		_draw_charge(slot, y, color)
-		_draw_slots(font, slot, y, h)
+		_draw_charge(slot, COL_MARGIN + STRIPE_W, COL_W - STRIPE_W, y, color)
+		_draw_slots(font, slot, COL_MARGIN + COL_W - PANEL_PAD, y, h)
 
 	# A team card has no pips: its lives are the team's, on the header above.
 	if with_pips:
@@ -304,9 +390,7 @@ func _draw_pip(tex: Texture2D, at: Vector2, base: Vector2, scale_mult: float, al
 # Clean placements toward the next skill, as segments along the card's top
 # edge. Inside the card rather than a bar of its own: it is a minor readout
 # and the card is already the thing a player's eye goes to for their state.
-func _draw_charge(slot: Dictionary, y: float, color: Color) -> void:
-	var x0: float = COL_MARGIN + STRIPE_W
-	var w: float = COL_W - STRIPE_W
+func _draw_charge(slot: Dictionary, x0: float, w: float, y: float, color: Color) -> void:
 	var n: int = maxi(1, charge_max)
 	var have: int = int(slot.get("charge", 0))
 	var seg: float = (w - float(n - 1) * 2.0) / float(n)
@@ -314,11 +398,11 @@ func _draw_charge(slot: Dictionary, y: float, color: Color) -> void:
 		var r := Rect2(x0 + float(i) * (seg + 2.0), y + 2.0, seg, CHARGE_H)
 		draw_rect(r, Color(color.r, color.g, color.b, 0.9) if i < have else CHARGE_EMPTY, true)
 
-# The two skill slots, stacked at the card's right edge with their cast keys
-# underneath. An empty slot is a faint square so the space reads as "nothing
-# here yet" rather than as nothing; a full one is the glyph on its disc.
-func _draw_slots(font: Font, slot: Dictionary, y: float, h: float) -> void:
-	var right: float = COL_MARGIN + COL_W - PANEL_PAD
+# The two skill slots, side by side and ending at `right`, with their cast
+# keys underneath. An empty slot is a faint square so the space reads as
+# "nothing here yet" rather than as nothing; a full one is the glyph on its
+# disc.
+func _draw_slots(font: Font, slot: Dictionary, right: float, y: float, h: float) -> void:
 	var sy: float = y + (h - SLOT_SIZE) * 0.5 - 4.0
 	var keys: PackedStringArray = str(slot.get("cast_label", "")).split("/")
 	var entries := [
@@ -433,4 +517,9 @@ func _draw_message(font: Font) -> void:
 		Rect2(0.0, y - 34.0, size.x, 52.0),
 		Color(MESSAGE_BG.r, MESSAGE_BG.g, MESSAGE_BG.b, MESSAGE_BG.a * a), true
 	)
-	draw_string(font, Vector2(0.0, y), _message, HORIZONTAL_ALIGNMENT_CENTER, size.x, 32, c)
+	# At 32 the longest toasts are ~700px, which is wider than a race tower.
+	# Shrunk to fit rather than wrapped: a two-line toast covers the brick.
+	var font_size: int = 32
+	while font_size > 14 and font.get_string_size(_message, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > size.x - 16.0:
+		font_size -= 2
+	draw_string(font, Vector2(0.0, y), _message, HORIZONTAL_ALIGNMENT_CENTER, size.x, font_size, c)

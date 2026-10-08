@@ -53,6 +53,8 @@ func _seating_hint(variant: int) -> String:
 			return "Everyone builds one tower together, sharing one pool of lives"
 		GameSettings.TOWER_RACE:
 			return "Left tower: P1 (+ P3)      Right tower: P2 (+ P4)"
+		GameSettings.TOWER_RACE_SOLO:
+			return "A tower each, side by side, in seat order — and a hex always lands on whoever is highest"
 	return "Every builder for themselves"
 
 # `solo` is the race's single-player entry point: that mode is a race between

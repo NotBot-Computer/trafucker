@@ -123,9 +123,9 @@ func _refresh() -> void:
 func _next_scene() -> String:
 	if race:
 		return "res://scenes/Main.tscn"
-	# The tower race is two TowerModes side by side under a host of its own;
+	# A race is several TowerModes side by side under a host of its own;
 	# every other variant is one TowerMode that reads the variant itself.
-	if GameSettings.tower_variant == GameSettings.TOWER_RACE:
+	if GameSettings.tower_is_race():
 		return "res://scenes/TowerRace.tscn"
 	return "res://scenes/TowerMode.tscn"
 
@@ -136,7 +136,7 @@ func _team_line(slot: int) -> String:
 	if race:
 		return ""
 	var v: int = GameSettings.tower_variant
-	if v == GameSettings.TOWER_FFA or v == GameSettings.TOWER_COOP:
+	if v == GameSettings.TOWER_FFA or v == GameSettings.TOWER_COOP or v == GameSettings.TOWER_RACE_SOLO:
 		return ""
 	return GameSettings.tower_team_name(GameSettings.tower_team_of(slot)) + "\n"
 

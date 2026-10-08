@@ -1,102 +1,139 @@
 extends Control
 
-## Pile Up's TEAM RACE — two towers side by side, one team building each, at
-## the same time. First team to settle its tower over the line wins; a team
-## that runs out of lives first loses. Hexes cast on one tower land on the
-## other (TowerMode.receive_hex), on that tower's next brick.
+## Pile Up's races — several towers side by side, built at the same time.
+## TEAM RACE has two, one per team; RACE (the free-for-all one) has one per
+## player, two to four. First tower to settle over the line wins. A tower
+## that runs out of lives drops out where it stands and the rest race on; the
+## last one left wins. Hexes cast on one tower land on another
+## (TowerMode.receive_hex), on that tower's next brick.
 ##
-## ## Why two TowerModes rather than one with two platforms
+## ## Why several TowerModes rather than one with several platforms
 ##
 ## A TowerMode is one turn loop: one brick in the air, one settle, one
-## resolve. Two teams building *at once* is two of those loops, and the
-## mode's whole fault rule is built on there being exactly one — so the race
-## is two complete, unmodified-in-spirit TowerModes, not a TowerMode taught to
-## juggle. Each sits in its own SubViewport, and a SubViewport has its own
+## resolve. Teams building *at once* is several of those loops, and the
+## mode's whole fault rule is built on there being exactly one — so a race is
+## several complete, unmodified-in-spirit TowerModes, not a TowerMode taught
+## to juggle. Each sits in its own SubViewport, and a SubViewport has its own
 ## World2D: its own physics space, its own current camera, its own canvas
-## layers. A brick on the left tower cannot touch the right one because they
-## are not in the same world, not because anything checks.
+## layers. A brick on one tower cannot touch another because they are not in
+## the same world, not because anything checks.
 ##
 ## What a hosted tower does differently is small and lives behind
 ## `TowerMode.host`: it takes no input of its own (this script forwards every
-## key to both, so neither depends on which viewport Godot would deliver an
-## event to), shows no game-over overlay, and reports its result here the
+## key to every tower, so none depends on which viewport Godot would deliver
+## an event to), shows no game-over overlay, and reports its result here the
 ## frame it is known.
+##
+## ## Who a hex hits
+##
+## With two towers, the other one. With more, **the tallest rival** — ties to
+## whoever is next in seat order after the caster. A hex aimed at a random
+## rival is noise, and one aimed at the next seat is a feud between
+## neighbours; aimed at the leader it is the race's catch-up rule, and one
+## everyone can see coming because the progress bars say who is ahead.
 ##
 ## ## Why TextureRects and not SubViewportContainers
 ##
 ## The project stretches its 1500x800 canvas to the window ("canvas_items"),
 ## so on a high-DPI screen the root renders at the window's real resolution. A
 ## SubViewport renders at whatever size it is given, and a container sizes it
-## in the root's *logical* pixels — so both towers would be drawn at 750x800
-## and scaled up, visibly softer than everything else in the game. Instead
-## each viewport is sized to the window's real pixels and told, through
-## size_2d_override, to lay its 2D out at 750x800 anyway; a TextureRect
-## shows it. The tower cannot tell the difference — get_visible_rect() reports
-## the override — and it renders as sharp as the other modes.
+## in the root's *logical* pixels — so the towers would be drawn at their
+## logical size and scaled up, visibly softer than everything else in the
+## game. Instead each viewport is sized to the window's real pixels and told,
+## through size_2d_override, to lay its 2D out at the logical size anyway; a
+## TextureRect shows it. The tower cannot tell the difference —
+## get_visible_rect() reports the override.
+##
+## At three or four towers a view is 500 or 375px wide, too narrow for the
+## HUD's two side columns, and TowerHUD switches to its compact strip on its
+## own (TowerHUD.COMPACT_BELOW).
 
 const TOWER := preload("res://scenes/TowerMode.tscn")
 
-# The seam between the towers: a dark divider carrying each team's progress
-# to the line, so neither team has to look across the screen to know whether
-# it is winning. Sits in the 24px margins both HUDs already leave at their
-# outer edges.
-const SEAM_W := 30.0
+# Dividers between the towers. Two towers keep the wide seam the team race
+# shipped with; three or four are narrow enough that every pixel is play
+# column or HUD, so theirs are thin.
+const SEAM_W_TWO := 30.0
+const SEAM_W_MORE := 12.0
 const SEAM_BG := Color(0.05, 0.06, 0.14, 0.85)
-const METER_W := 8.0
-const METER_TOP := 120.0
-const METER_BOTTOM_UP := 90.0 # from the bottom of the screen
-const METER_EMPTY := Color(1.0, 1.0, 1.0, 0.12)
+
+# Each tower's progress to the line, as a bar along the bottom of its own
+# view — every bar on one baseline, so who is ahead reads straight across the
+# screen. The bottom of a view is the earth band under the ground for most of
+# a race (the camera only climbs past ~7 cells), so the bar covers soil, not
+# bricks, until the very end.
+const BAR_H := 10.0
+const BAR_UP := 22.0 # from the bottom of the screen to the bar's top
+const BAR_MARGIN := 18.0
+const BAR_EMPTY := Color(1.0, 1.0, 1.0, 0.14)
+const BAR_PLATE := Color(0.05, 0.06, 0.14, 0.72)
+const OUT_DIM := Color(0.04, 0.04, 0.09, 0.62)
+const OUT_TEXT := Color(1.0, 0.45, 0.42, 0.95)
 
 @onready var screens: Control = $Screens
-@onready var seam: Control = $Seam
+@onready var frame: Control = $Frame
 @onready var overlay: Control = $Layer/Overlay
 @onready var overlay_title: Label = $Layer/Overlay/OverlayTitle
 @onready var overlay_body: Label = $Layer/Overlay/OverlayBody
 
-var towers: Array = [] # [left, right]; untyped, TowerMode has no class_name
+var variant: int = GameSettings.TOWER_RACE
+var towers: Array = [] # left to right; untyped, TowerMode has no class_name
+var dropped_out: Array[bool] = [] # per tower: ran out of lives, race goes on without it
 var viewports: Array[SubViewport] = []
+var view_w: float = 0.0
 var over := false
 
 func _ready() -> void:
-	seam.draw.connect(_draw_seam)
-	var half := Vector2(size.x * 0.5, size.y)
-	if half.x <= 0.0:
-		var full: Vector2 = get_viewport().get_visible_rect().size
-		half = Vector2(full.x * 0.5, full.y)
+	frame.draw.connect(_draw_frame)
+	variant = GameSettings.tower_variant if GameSettings.tower_is_race() else GameSettings.TOWER_RACE
+	var full := size
+	if full.x <= 0.0:
+		full = get_viewport().get_visible_rect().size
+	var count: int = _tower_count()
+	view_w = floorf(full.x / float(count))
+	var view := Vector2(view_w, full.y)
 	var deal: int = _new_deal()
-	for side in range(2):
+	for side in range(count):
 		var vp := SubViewport.new()
-		vp.size_2d_override = Vector2i(half)
+		vp.size_2d_override = Vector2i(view)
 		vp.size_2d_override_stretch = true
-		vp.size = _pixel_size(half)
+		vp.size = _pixel_size(view)
 		vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		add_child(vp)
 
-		var view := TextureRect.new()
-		view.texture = vp.get_texture()
-		view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		view.stretch_mode = TextureRect.STRETCH_SCALE
-		view.position = Vector2(half.x * float(side), 0.0)
-		view.size = half
-		view.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		screens.add_child(view)
+		var shown := TextureRect.new()
+		shown.texture = vp.get_texture()
+		shown.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		shown.stretch_mode = TextureRect.STRETCH_SCALE
+		shown.position = Vector2(view_w * float(side), 0.0)
+		shown.size = view
+		shown.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		screens.add_child(shown)
 
 		# Everything the tower reads in _ready() is set before it enters the
 		# tree: which variant, who builds on it, how far back the camera sits.
 		var tower = TOWER.instantiate()
 		tower.host = self
-		tower.variant = GameSettings.TOWER_RACE
+		tower.variant = variant
 		tower.visible_cells = tower.RACE_VISIBLE_CELLS
 		tower.brick_seed = deal
 		var crew: Array[int] = []
 		for s in range(GameSettings.player_count):
-			if GameSettings.tower_team_of(s, GameSettings.TOWER_RACE) == side:
+			if GameSettings.tower_team_of(s, variant) == side:
 				crew.append(s)
 		tower.members = crew
 		vp.add_child(tower)
 		towers.append(tower)
 		viewports.append(vp)
+		dropped_out.append(false)
 	get_tree().root.size_changed.connect(_on_window_resized)
+
+# One tower per team: two in the team race, one per player in the solo one.
+func _tower_count() -> int:
+	var n := 0
+	for s in range(GameSettings.player_count):
+		n = maxi(n, GameSettings.tower_team_of(s, variant) + 1)
+	return maxi(1, n)
 
 # The window's real pixels behind `logical` — see the header. At least the
 # logical size, so a window smaller than 1500x800 is never rendered below it.
@@ -109,7 +146,7 @@ func _on_window_resized() -> void:
 		vp.size = _pixel_size(Vector2(vp.size_2d_override))
 
 func _process(_delta: float) -> void:
-	seam.queue_redraw()
+	frame.queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
@@ -121,7 +158,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_ENTER:
 			_restart()
 		return
-	# Both towers hear every key; each only acts on its own builders' keys.
+	# Every tower hears every key; each only acts on its own builders' keys.
 	for t in towers:
 		t.handle_key(event)
 
@@ -129,69 +166,122 @@ func _restart() -> void:
 	over = false
 	overlay.visible = false
 	var deal: int = _new_deal()
-	for t in towers:
-		t.brick_seed = deal
-		t._start_match()
+	for i in range(towers.size()):
+		dropped_out[i] = false
+		towers[i].brick_seed = deal
+		towers[i]._start_match()
 
-# Both towers get the same bricks in the same order (TowerMode.brick_seed),
+# Every tower gets the same bricks in the same order (TowerMode.brick_seed),
 # and a fresh order every race. Never 0, which means "no deal".
 func _new_deal() -> int:
 	return (randi() & 0x7fffffff) | 1
 
+func _still_racing(i: int) -> bool:
+	return not dropped_out[i] and towers[i].state != "gameover"
+
 # --- Called by the towers ---------------------------------------------------
 
-# A hex cast on `from`, handed to the other tower. Returns who it landed on.
+# A hex cast on `from`, handed to a rival tower — the tallest, see the header
+# — or to every rival, for a skill that `affects_all_opponents()`. Returns who
+# it landed on.
 func relay_hex(from, id: String, caster: int) -> Array[int]:
+	var out: Array[int] = []
 	var i: int = towers.find(from)
 	if i < 0 or over:
-		var none: Array[int] = []
-		return none
-	return towers[1 - i].receive_hex(id, caster)
+		return out
+	var probe: TowerSkill = TowerSkillCatalog.make(id, from, caster, caster)
+	if probe == null:
+		return out
+	if probe.affects_all_opponents():
+		for j in range(towers.size()):
+			if j != i and _still_racing(j):
+				out.append_array(towers[j].receive_hex(id, caster))
+		return out
+	var target: int = hex_target(i)
+	if target >= 0:
+		out = towers[target].receive_hex(id, caster)
+	return out
+
+# Which tower an ordinary hex from tower `from` lands on: the tallest rival
+# still racing, ties to the next in seat order after the caster. -1 if none.
+func hex_target(from: int) -> int:
+	var best := -1
+	for k in range(1, towers.size()):
+		var j: int = (from + k) % towers.size()
+		if not _still_racing(j):
+			continue
+		if best == -1 or towers[j]._height_cells() > towers[best]._height_cells() + 0.01:
+			best = j
+	return best
 
 # A tower's match is decided — it reached the line, or ran out of lives. The
-# first report decides the race; both towers are then stopped where they are.
+# line ends the race on the spot. Running out only ends it for that tower,
+# unless that leaves one standing, which then wins.
 func tower_finished(tower) -> void:
 	if over:
 		return
+	var i: int = towers.find(tower)
+	if i < 0:
+		return
+	if tower.winner_team >= 0:
+		_declare(i, "%s reached the line first" % _name_of(i))
+		return
+	dropped_out[i] = true
+	tower.halt()
+	var left: Array[int] = []
+	for j in range(towers.size()):
+		if not dropped_out[j]:
+			left.append(j)
+	if left.size() == 1:
+		var why: String = "%s ran out of lives" % _name_of(i) if towers.size() == 2 else "%s is the last one standing" % _name_of(left[0])
+		_declare(left[0], why)
+	elif left.is_empty():
+		_declare(-1, "everybody ran out of lives")
+
+func _declare(winner: int, why: String) -> void:
 	over = true
-	var side: int = towers.find(tower)
-	var reached: bool = tower.winner_team >= 0
-	var winner_side: int = side if reached else 1 - side
 	for t in towers:
 		t.halt()
-
-	var winner_name: String = GameSettings.tower_team_name(winner_side, GameSettings.TOWER_RACE)
-	var loser_name: String = GameSettings.tower_team_name(1 - winner_side, GameSettings.TOWER_RACE)
-	overlay_title.text = "%s WINS" % winner_name
-	var why: String
-	if reached:
-		why = "%s reached the line first" % winner_name
-	else:
-		why = "%s ran out of lives" % loser_name
-	overlay_body.text = "%s\n\n%s\n%s" % [why, towers[0].team_summary(), towers[1].team_summary()]
+	overlay_title.text = "NOBODY WINS" if winner < 0 else "%s WINS" % _name_of(winner)
+	var lines: Array[String] = [why, ""]
+	for t in towers:
+		lines.append(t.team_summary())
+	overlay_body.text = "\n".join(lines)
 	overlay.visible = true
 
-# --- The seam ---------------------------------------------------------------
+func _name_of(i: int) -> String:
+	return GameSettings.tower_team_name(i, variant)
 
-func _draw_seam() -> void:
-	var cx: float = size.x * 0.5
-	seam.draw_rect(Rect2(cx - SEAM_W * 0.5, 0.0, SEAM_W, size.y), SEAM_BG, true)
-	if towers.size() < 2:
+# --- The frame: dividers, progress bars, and who has dropped out --------------
+
+func _draw_frame() -> void:
+	var n: int = towers.size()
+	if n == 0:
 		return
+	var h: float = size.y
+	var seam: float = SEAM_W_TWO if n == 2 else SEAM_W_MORE
+	for k in range(1, n):
+		var x: float = view_w * float(k)
+		frame.draw_rect(Rect2(x - seam * 0.5, 0.0, seam, h), SEAM_BG, true)
+
+	var font: Font = ThemeDB.fallback_font
 	var goal: float = towers[0].goal_cells
-	if goal <= 0.0:
-		return
-	var top: float = METER_TOP
-	var bottom: float = size.y - METER_BOTTOM_UP
-	for side in range(2):
-		var t = towers[side]
-		var x: float = cx - METER_W - 2.0 if side == 0 else cx + 2.0
+	for i in range(n):
+		var t = towers[i]
+		var x0: float = view_w * float(i)
+		if dropped_out[i] and not over:
+			frame.draw_rect(Rect2(x0, 0.0, view_w, h), OUT_DIM, true)
+			frame.draw_string(font, Vector2(x0, h * 0.5), "%s OUT" % _name_of(i),
+				HORIZONTAL_ALIGNMENT_CENTER, view_w, 30, OUT_TEXT)
+		if goal <= 0.0:
+			continue
+		var bx: float = x0 + BAR_MARGIN
+		var bw: float = view_w - BAR_MARGIN * 2.0 - 52.0
+		var by: float = h - BAR_UP
+		frame.draw_rect(Rect2(bx - 6.0, by - 8.0, view_w - BAR_MARGIN * 2.0 + 12.0, BAR_H + 16.0), BAR_PLATE, true)
+		frame.draw_rect(Rect2(bx, by, bw, BAR_H), BAR_EMPTY, true)
 		var frac: float = clampf(t._height_cells() / goal, 0.0, 1.0)
-		var team_col: Color = t._team_color(side)
-		seam.draw_rect(Rect2(x, top, METER_W, bottom - top), METER_EMPTY, true)
-		var fill_h: float = (bottom - top) * frac
-		seam.draw_rect(Rect2(x, bottom - fill_h, METER_W, fill_h), team_col, true)
-	var gc: Color = towers[0].GOAL_COLOR
-	seam.draw_rect(Rect2(cx - SEAM_W * 0.5 + 3.0, top - 3.0, SEAM_W - 6.0, 3.0), gc, true)
-	seam.draw_string(ThemeDB.fallback_font, Vector2(cx - SEAM_W * 0.5, top - 10.0), "%d" % int(goal),
-		HORIZONTAL_ALIGNMENT_CENTER, SEAM_W, 14, gc)
+		frame.draw_rect(Rect2(bx, by, bw * frac, BAR_H), t._team_color(i), true)
+		frame.draw_rect(Rect2(bx + bw - 2.0, by - 3.0, 3.0, BAR_H + 6.0), t.GOAL_COLOR, true)
+		frame.draw_string(font, Vector2(bx + bw + 8.0, by + BAR_H), "%d / %d" % [int(round(t._height_cells())), int(goal)],
+			HORIZONTAL_ALIGNMENT_LEFT, 52.0, 13, Color(1.0, 1.0, 1.0, 0.9))

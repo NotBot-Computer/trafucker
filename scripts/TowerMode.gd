@@ -916,13 +916,21 @@ func receive_hex(id: String, caster: int) -> Array[int]:
 # and how it got there.
 func team_summary() -> String:
 	var t: int = _teams_here()[0] if not _teams_here().is_empty() else 0
+	var crew: Array[int] = _team_members(t)
+	var standing: String = "OUT" if lives[t] <= 0 else "%d %s left" % [lives[t], "life" if lives[t] == 1 else "lives"]
+	# A tower of one (the solo race) is named once, not as a team and again
+	# as its only member.
+	if crew.size() == 1:
+		var s: int = crew[0]
+		return "%s — %d high, %s, %d flown, %d dropped" % [
+			slot_name(s), int(round(_height_cells())), standing, turns_flown[s], bricks_dropped[s]]
 	var parts: Array[String] = []
-	for s in _team_members(t):
+	for s in crew:
 		parts.append("%s %d flown, %d dropped" % [slot_name(s), turns_flown[s], bricks_dropped[s]])
 	return "%s — %d high, %s — %s" % [
 		GameSettings.tower_team_name(t, variant),
 		int(round(_height_cells())),
-		"OUT" if lives[t] <= 0 else "%d %s left" % [lives[t], "life" if lives[t] == 1 else "lives"],
+		standing,
 		"  ·  ".join(parts),
 	]
 
@@ -1309,7 +1317,7 @@ func _start_lives() -> int:
 			return START_LIVES
 		GameSettings.TOWER_COOP:
 			return COOP_LIVES
-		GameSettings.TOWER_RACE:
+		GameSettings.TOWER_RACE, GameSettings.TOWER_RACE_SOLO:
 			return RACE_LIVES
 	return TEAM_LIVES
 
@@ -1317,7 +1325,7 @@ func _goal_for_variant() -> float:
 	match variant:
 		GameSettings.TOWER_COOP:
 			return COOP_GOAL_CELLS
-		GameSettings.TOWER_RACE:
+		GameSettings.TOWER_RACE, GameSettings.TOWER_RACE_SOLO:
 			return RACE_GOAL_CELLS
 	return 0.0
 
@@ -1453,7 +1461,9 @@ func _turn_name() -> String:
 func _announce_fall(team: int) -> void:
 	var who: String = _turn_name()
 	var what: String = "BRICK" if fallen_this_turn == 1 else "%d BRICKS" % fallen_this_turn
-	if variant == GameSettings.TOWER_FFA:
+	# A team of one is just a player: "P1 DROPPED A BRICK — P1 OUT!" says
+	# nothing the short form does not.
+	if variant == GameSettings.TOWER_FFA or variant == GameSettings.TOWER_RACE_SOLO:
 		if lives[team] <= 0:
 			hud.show_message("%s DROPPED %s — OUT!" % [who, what], Color(1.0, 0.42, 0.36))
 		else:
@@ -1957,6 +1967,10 @@ func _hud_groups() -> Array[Dictionary]:
 			"color": _team_color(t),
 			"lives": lives[t],
 			"slots": _team_members(t),
+			# A tower of one in the solo race: a team header naming the same
+			# player as the card under it would say everything twice, so it
+			# draws as a free-for-all card, pips and all.
+			"plain": variant == GameSettings.TOWER_RACE_SOLO,
 		})
 	return out
 
@@ -1968,7 +1982,7 @@ func _hud_subtitle() -> String:
 			return "one brick, two pairs of hands"
 		GameSettings.TOWER_COOP:
 			return "height %d / %d  ·  storm in %d" % [int(round(_height_cells())), int(goal_cells), storm_in]
-		GameSettings.TOWER_RACE:
+		GameSettings.TOWER_RACE, GameSettings.TOWER_RACE_SOLO:
 			return "race to %d  ·  height %d" % [int(goal_cells), int(round(_height_cells()))]
 	return "one tower, three lives each"
 
@@ -1991,6 +2005,18 @@ func _controls_text() -> String:
 	# One action per line — TowerHUD splits on newlines because the side
 	# column is too narrow for the single-line form.
 	var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[active_slot]
+	if hud.is_compact():
+		# A three- or four-tower race gives each tower 500 or 375px and the
+		# HUD a strip along the top, with two short lines of keys under it.
+		# Raw key names, because "Left / Right   half a block" is the long
+		# form this has no room for. The widest player (P2) is about 290px.
+		return "%s/%s move · %s+dir dash · %s fall\n%s/%s turn · %s %s" % [
+			OS.get_keycode_string(cfg["left"]), OS.get_keycode_string(cfg["right"]),
+			OS.get_keycode_string(cfg["confirm"]),
+			OS.get_keycode_string(cfg["down"]),
+			OS.get_keycode_string(cfg["skill_opponent"]), OS.get_keycode_string(cfg["skill_self"]),
+			cfg.get("cast_label", "").replace(" ", ""), "skills",
+		]
 	if crew_mate >= 0:
 		# Two people, two halves of the same list. Named, because a crew
 		# swaps halves every brick and the panel is how they find out who has

@@ -39,6 +39,11 @@ extends Node
 ##              the host, every race ending in exactly one result, and a
 ##              restart putting both towers back. Reports how races end —
 ##              by the line or by running out of lives.
+##   solo     — the free-for-all race (TOWER_RACE_SOLO): one tower per
+##              player, the compact HUD switching on below 700px, a hex
+##              landing on the tallest rival (ties to the next seat), a tower
+##              that runs out of lives dropping out while the rest race on,
+##              and the same one-result rule over three and four towers.
 ##
 ## It aims the way TowerProbe does — by writing aim_x — so it says nothing
 ## about the keys, and nothing at all about whether any of this is fun.
@@ -88,6 +93,14 @@ func _ready() -> void:
 		await _races(2, 0.3)
 		await _races(4, 0.3)
 		await _races(3, 0.3)
+
+	if _wants("solo"):
+		print("=== solo race: plumbing ===")
+		await _solo_plumbing()
+		print("=== solo race: races ===")
+		await _races(2, 0.3, GameSettings.TOWER_RACE_SOLO)
+		await _races(3, 0.3, GameSettings.TOWER_RACE_SOLO)
+		await _races(4, 0.3, GameSettings.TOWER_RACE_SOLO)
 
 	print("=== verdict ===")
 	if _failures.is_empty():
@@ -382,7 +395,7 @@ func _coop_matches(count: int, spread: float) -> void:
 const RACE := preload("res://scenes/TowerRace.tscn")
 var _race = null
 
-func _spawn_race(count: int, seed_value: int) -> void:
+func _spawn_race(count: int, seed_value: int, variant: int = GameSettings.TOWER_RACE) -> void:
 	if _mode != null:
 		_mode.queue_free()
 		_mode = null
@@ -393,7 +406,7 @@ func _spawn_race(count: int, seed_value: int) -> void:
 	seed(seed_value)
 	_rng.seed = seed_value
 	GameSettings.mode = GameSettings.MODE_TOWER
-	GameSettings.tower_variant = GameSettings.TOWER_RACE
+	GameSettings.tower_variant = variant
 	GameSettings.player_count = count
 	var cols: Array[Color] = []
 	for i in range(count):
@@ -506,12 +519,12 @@ func _race_plumbing() -> void:
 	if not clean:
 		_fail("race: a restart did not put both towers back")
 
-func _races(count: int, spread: float) -> void:
+func _races(count: int, spread: float, variant: int = GameSettings.TOWER_RACE) -> void:
 	var by_line := 0
 	var by_lives := 0
 	var seconds := 0.0
 	for m in range(MATCHES):
-		await _spawn_race(count, 9900 + m * 131 + count)
+		await _spawn_race(count, 9900 + m * 131 + count, variant)
 		var aimed := {} # tower -> the piece already aimed
 		var t := 0.0
 		while not _race.over and t < 900.0:
@@ -528,25 +541,118 @@ func _races(count: int, spread: float) -> void:
 		if not _race.over:
 			_fail("race %dp seed %d: no result after %.0fs" % [count, m, t])
 			continue
-		var L = _race.towers[0]
-		var R = _race.towers[1]
-		var reached: Array[bool] = [L.winner_team >= 0, R.winner_team >= 0]
-		var out: Array[bool] = [L._living_teams() == 0, R._living_teams() == 0]
-		if reached.count(true) + out.count(true) != 1:
-			_fail("race %dp seed %d: %d tower(s) reached the line and %d ran out — expected exactly one result" % [
-				count, m, reached.count(true), out.count(true)])
-		if reached.has(true):
+		# One result: either exactly one tower reached the line (any number may
+		# have dropped out before it did), or nobody did and all but one ran
+		# out of lives.
+		var n: int = _race.towers.size()
+		var reached: Array[bool] = []
+		var out: Array[bool] = []
+		var states: Array[String] = []
+		for tw in _race.towers:
+			reached.append(tw.winner_team >= 0)
+			out.append(tw._living_teams() == 0)
+			states.append(tw.state)
+		var by_the_line: bool = reached.count(true) == 1
+		var by_attrition: bool = reached.count(true) == 0 and out.count(true) == n - 1
+		if not by_the_line and not by_attrition:
+			_fail("race %dp seed %d: %d tower(s) reached the line and %d of %d ran out — not one result" % [
+				count, m, reached.count(true), out.count(true), n])
+		if by_the_line:
 			by_line += 1
 		else:
 			by_lives += 1
-		if L.state != "gameover" or R.state != "gameover":
-			_fail("race %dp seed %d: a tower is still running after the result (%s / %s)" % [count, m, L.state, R.state])
-		var want_side: int = reached.find(true) if reached.has(true) else out.find(false)
-		var want: String = "%s WINS" % GameSettings.tower_team_name(want_side, GameSettings.TOWER_RACE)
+		if states.count("gameover") != n:
+			_fail("race %dp seed %d: a tower is still running after the result %s" % [count, m, states])
+		var want_side: int = reached.find(true) if by_the_line else out.find(false)
+		var want: String = "%s WINS" % GameSettings.tower_team_name(want_side, variant)
 		if _race.overlay_title.text != want or not _race.overlay.visible:
 			_fail("race %dp seed %d: overlay '%s' (visible %s), expected '%s'" % [count, m, _race.overlay_title.text, _race.overlay.visible, want])
-	print("  RACE %dp spread %.1f   decided by the line %d, by lives %d   %.0fs of play a race" % [
-		count, spread, by_line, by_lives, seconds / MATCHES])
+	print("  %s %dp (%d towers) spread %.1f   decided by the line %d, by lives %d   %.0fs of play a race" % [
+		GameSettings.tower_variant_info(variant)["title"], count, _race.towers.size() if _race != null else 0,
+		spread, by_line, by_lives, seconds / MATCHES])
+
+# The free-for-all race: a tower each, the compact HUD, the leader as the hex
+# target, and a tower that runs out dropping out while the rest race on.
+func _solo_plumbing() -> void:
+	await _spawn_race(4, 93, GameSettings.TOWER_RACE_SOLO)
+	var crews: Array = []
+	for tw in _race.towers:
+		crews.append(tw.members)
+	print("  towers %d, members %s" % [_race.towers.size(), crews])
+	if crews != [[0], [1], [2], [3]]:
+		_fail("solo race: 4 players built %s, expected one tower each" % [crews])
+	var compact: Array = []
+	for tw in _race.towers:
+		compact.append("%dpx %s" % [int(tw.hud.size.x), "compact" if tw.hud.is_compact() else "FULL"])
+	print("  HUDs: %s" % [compact])
+	for tw in _race.towers:
+		if not tw.hud.is_compact():
+			_fail("solo race: a %dpx tower drew the full two-column HUD" % int(tw.hud.size.x))
+
+	# Build different heights, then hex from P1: it must land on the tallest
+	# rival, ties to the next seat. Every tower is dealt the same bricks and
+	# dead-centre drops clear the line in half a minute, so the line is moved
+	# out of reach for this check, and each tower aims a little differently.
+	for tw in _race.towers:
+		tw.goal_cells = 1000.0
+	var aimed := {}
+	var t := 0.0
+	while t < 25.0 and not _race.over:
+		for i in range(_race.towers.size()):
+			var tw = _race.towers[i]
+			if tw.state == "piloting" and tw.active_piece != null and aimed.get(tw) != tw.active_piece:
+				aimed[tw] = tw.active_piece
+				tw.aim_x = tw.CELL * 0.5 * float(i - 1)
+				tw.aim_steps = i % 2
+		await get_tree().physics_frame
+		t += get_physics_process_delta_time()
+	await _wait_tower_piloting(0)
+	# Read on the frame of the cast — the other towers keep building while
+	# P1's turn comes round.
+	var heights: Array[String] = []
+	for tw in _race.towers:
+		heights.append("%.1f" % tw._height_cells())
+	var expect: int = -1
+	for k in range(1, 4):
+		var j: int = k
+		if expect == -1 or _race.towers[j]._height_cells() > _race.towers[expect]._height_cells() + 0.01:
+			expect = j
+	var tw0 = _race.towers[0]
+	tw0._grant(0, "tremor")
+	var cast: bool = tw0._cast(0, "opponent")
+	var got: int = -1
+	for i in range(1, 4):
+		if not _race.towers[i].queued_effects.is_empty():
+			got = i
+	print("  heights %s — P1's hex: cast %s, landed on tower %d, tallest rival is tower %d" % [heights, cast, got, expect])
+	if _race.over:
+		print("  (a tower reached the line before the hex could be checked)")
+	elif not cast or got != expect:
+		_fail("solo race: P1's hex landed on tower %d, expected the tallest rival, tower %d" % [got, expect])
+
+	# Drop one tower out by hand: the rest keep racing.
+	if not _race.over:
+		var victim = _race.towers[3]
+		victim.lives[3] = 0
+		_race.tower_finished(victim)
+		await get_tree().physics_frame
+		var others: Array[String] = []
+		for i in range(3):
+			others.append(_race.towers[i].state)
+		print("  P4 ran out: P4 %s, race over %s, the others %s" % [victim.state, _race.over, others])
+		if victim.state != "gameover" or _race.over or others.has("gameover"):
+			_fail("solo race: one tower running out stopped the wrong things")
+		if _race.hex_target(0) == 3:
+			_fail("solo race: a hex can still be aimed at a tower that dropped out")
+
+func _wait_tower_piloting(i: int) -> void:
+	var t := 0.0
+	while t < TURN_TIMEOUT and not _race.over:
+		var tw = _race.towers[i]
+		if tw.state == "piloting" and tw.active_piece != null:
+			return
+		await get_tree().physics_frame
+		t += get_physics_process_delta_time()
 
 # --- Co-pilot: the crew -----------------------------------------------------
 

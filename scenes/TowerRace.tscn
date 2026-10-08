@@ -13,7 +13,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 2
 
-[node name="Seam" type="Control" parent="."]
+[node name="Frame" type="Control" parent="."]
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 2
@@ -44,14 +44,14 @@ text = ""
 [node name="OverlayBody" type="Label" parent="Layer/Overlay"]
 anchor_right = 1.0
 offset_top = 305.0
-offset_bottom = 460.0
+offset_bottom = 490.0
 theme_override_font_sizes/font_size = 18
 horizontal_alignment = 1
 text = ""
 
 [node name="OverlayHint" type="Label" parent="Layer/Overlay"]
 anchor_right = 1.0
-offset_top = 480.0
-offset_bottom = 510.0
+offset_top = 515.0
+offset_bottom = 545.0
 horizontal_alignment = 1
 text = "ENTER to race again      ESC for the menu"
