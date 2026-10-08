@@ -1,10 +1,11 @@
 extends Control
 
 ## Player count, plus the race-only single-player entry point. Which mode we
-## are heading into was decided on the main menu (GameSettings.mode).
+## are heading into was decided on the main menu (GameSettings.mode), and for
+## Pile Up which variant on TowerVariantSelect (GameSettings.tower_variant).
 
 func _ready() -> void:
-	$Players1Button.pressed.connect(func(): _select(2, true))
+	$Players1Button.pressed.connect(func(): _select(1 if _tower() else 2, not _tower()))
 	$Players2Button.pressed.connect(func(): _select(2))
 	$Players3Button.pressed.connect(func(): _select(3))
 	$Players4Button.pressed.connect(func(): _select(4))
@@ -12,13 +13,47 @@ func _ready() -> void:
 
 	# Pile Up has no AI: BotDriver plays a PlayerBoard — it senses traffic in
 	# an obstacle_container and steers between lane centres, none of which
-	# exists in the tower mode. So both the solo option and the bot hints are
-	# race-only until a tower bot exists (docs/PROJECT_STATE.md §9).
-	var race: bool = GameSettings.mode == GameSettings.MODE_RACE
-	$Players1Button.visible = race
-	$Hint.visible = race
-	$Title.text = "HOW MANY PLAYERS?" if race else "HOW MANY BUILDERS?"
-	($Players1Button if race else $Players2Button).grab_focus()
+	# exists in the tower mode. So the bot hints are race-only until a tower
+	# bot exists (docs/PROJECT_STATE.md §9). The one-player button is reused
+	# by the tower for something else entirely: co-op is the only variant with
+	# no opponent, so it is the only one a person can play alone.
+	if not _tower():
+		$Players1Button.visible = true
+		$Hint.visible = true
+		$Title.text = "HOW MANY PLAYERS?"
+		$Players1Button.grab_focus()
+		return
+
+	var info: Dictionary = GameSettings.tower_variant_info()
+	var counts: Array = info["counts"]
+	var buttons: Array[Button] = [$Players1Button, $Players2Button, $Players3Button, $Players4Button]
+	$Players1Button.text = "1 BUILDER"
+	for i in range(buttons.size()):
+		buttons[i].visible = counts.has(i + 1)
+	$Title.text = "%s — HOW MANY BUILDERS?" % info["title"]
+	$Hint.visible = true
+	$Hint.text = _seating_hint(GameSettings.tower_variant)
+	for b in buttons:
+		if b.visible:
+			b.grab_focus()
+			break
+
+func _tower() -> bool:
+	return GameSettings.mode == GameSettings.MODE_TOWER
+
+# Teams are seats (GameSettings.tower_team_of), so the count screen is where a
+# group finds out who they are playing with — before they pick colours.
+func _seating_hint(variant: int) -> String:
+	match variant:
+		GameSettings.TOWER_TEAMS:
+			return "Left team: P1 + P3      Right team: P2 + P4  (with three, P2 holds the right alone)"
+		GameSettings.TOWER_COPILOT:
+			return "Left crew: P1 + P3      Right crew: P2 + P4 — you swap steering and turning every brick"
+		GameSettings.TOWER_COOP:
+			return "Everyone builds one tower together, sharing one pool of lives"
+		GameSettings.TOWER_RACE:
+			return "Left tower: P1 (+ P3)      Right tower: P2 (+ P4)"
+	return "Every builder for themselves"
 
 # `solo` is the race's single-player entry point: that mode is a race between
 # boards, so there has to be something to race — it is really "two boards, one
@@ -33,4 +68,7 @@ func _select(count: int, solo: bool = false) -> void:
 	get_tree().change_scene_to_file("res://scenes/SkinSelect.tscn")
 
 func _on_back() -> void:
-	get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+	if _tower():
+		get_tree().change_scene_to_file("res://scenes/TowerVariantSelect.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")

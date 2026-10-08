@@ -65,19 +65,25 @@ func set_scroll(value: float) -> void:
 
 func _draw() -> void:
 	var tex_size: Vector2 = BACKDROP.get_size()
-	# Fit to width and let the height fall where it does: the art is 3:2 and
-	# the viewport is closer to 15:8, so fitting to width always overfills
-	# vertically, which is what leaves headroom to scroll through.
-	var draw_w: float = size.x
-	var scale_f: float = draw_w / tex_size.x
+	# Cover, not fit-to-width — though on the full 1500x800 screen those are
+	# the same thing: the art is 3:2 and the viewport is closer to 15:8, so
+	# fitting to width already overfills vertically, which is what leaves
+	# headroom to scroll through. They differ only on a view taller than the
+	# art, which is what each half of the tower race is (750x800): fit to
+	# width there draws the picture at half the size the other variants show
+	# it, under a band of flat sky. TowerGround.scale_for() is the same rule,
+	# and the two must agree or the near ground and the far one part company.
+	var scale_f: float = TowerGround.scale_for(size, tex_size)
+	var draw_w: float = tex_size.x * scale_f
 	var draw_h: float = tex_size.y * scale_f
+	var left: float = (size.x - draw_w) * 0.5
 	# Anchored so the art's own ground line lands where TowerGround draws the
 	# near ground, not so its bottom edge meets the bottom of the screen.
 	var top: float = ground_screen_y - TowerGround.GROUND_LINE_PX * scale_f + scroll
 
 	if top > 0.0:
 		draw_rect(Rect2(0.0, 0.0, size.x, top), SKY_COLOR, true)
-	draw_texture_rect(BACKDROP, Rect2(0.0, top, draw_w, draw_h), false)
+	draw_texture_rect(BACKDROP, Rect2(left, top, draw_w, draw_h), false)
 	var bottom: float = top + draw_h
 	if bottom < size.y:
 		draw_rect(Rect2(0.0, bottom, size.x, size.y - bottom), GROUND_COLOR, true)

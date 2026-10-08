@@ -37,6 +37,34 @@ class_name TowerSkill
 ##     timing, and why an opponent skill is never applied to the tower during
 ##     the caster's own turn.
 ##
+## ## The variants (GameSettings.TOWER_*), and what they change for a skill
+##
+## Pile Up has teams now, and free-for-all is the special case of a team of
+## one — so everything above still holds there exactly. Elsewhere:
+##
+##   * **`caster` and `target` may differ for a self skill.** A teammate can
+##     cast their self skill *for* whoever is flying (a support cast), and in
+##     co-pilot the crew member turning the brick can cast too. Either way the
+##     effect is attached to the flyer: `target` is the player on the clock,
+##     `caster` is who pressed the key. Key every hook and every draw on
+##     `target`, never on `caster`.
+##   * **A hex goes to the next RIVAL team**, on whichever member flies its
+##     next brick — never to a teammate. `affects_all_opponents()` means every
+##     living rival player (one copy per crew in co-pilot).
+##   * **In co-pilot, `target` can move.** A crew swaps who steers every turn,
+##     so at the start of each crew turn every effect on the crew is moved
+##     onto that turn's pilot. Compare `target` with `mode.active_slot` (which
+##     every shipped skill already does) and never cache "the target's slot"
+##     across turns.
+##   * **`caster` can be -1** — the storm, co-op's opponent, which casts hexes
+##     like a player. Name and colour it through `mode.slot_name(caster)` and
+##     `mode._slot_color(caster)`; `GameSettings.PLAYER_CONFIGS[caster]` with
+##     -1 is a negative index and silently reads as P4.
+##   * **In the race, `mode` is one of two.** Each tower is a whole TowerMode
+##     in its own SubViewport and World2D; a hex cast on one is queued on the
+##     other (`mode.receive_hex`), so it runs against *that* tower's `mode`.
+##     Draw on the canvases you are handed and it stays on its own half.
+##
 ## ## LIFECYCLE, in the order TowerMode calls it
 ##
 ##   setup(mode, id, caster, target)  ->  turns_left = duration_turns()
@@ -79,7 +107,8 @@ class_name TowerSkill
 ##                            position directly (it is shape-queried)
 ##   mode.CELL, PLATFORM_CELLS, LOST_Y, DESCEND_SPEED ...   the constants
 ##   mode.camera, mode.hud    for a shake, a toast (hud.show_message)
-##   mode._slot_color(slot)   a player's colour
+##   mode._slot_color(slot)   a player's colour (the storm's, for -1)
+##   mode.slot_name(slot)     a player's name ("THE STORM" for -1)
 ##
 ## Do NOT write `active_piece.global_position` — every move a held brick makes
 ## is permission-checked against the tower and the lattice, and a skill that

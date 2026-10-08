@@ -65,6 +65,14 @@ const PIP_EMPTY_ALPHA := 0.22
 const NEXT_H := 124.0
 const PANEL_PAD := 14.0
 
+# Team layout. A team's lives are one shared pool, so they are drawn once, on
+# a header above the team's cards, rather than repeated on every member's
+# card as if each had their own — which is the misreading a shared pool most
+# invites. The cards under a header lose their pip row and get shorter for it.
+const TEAM_HEAD_H := 54.0
+const TEAM_CARD_H := 58.0
+const TEAM_GAP := 12.0 # between one team's last card and the next team's header
+
 # The two skill slots on a card, right-hand side: a self slot and an opponent
 # slot, each a small square the glyph sits in, with the cast key under it.
 # The disc colours are Don't Crash's own (SKILL_ART_BRIEF: self on green,
@@ -98,9 +106,16 @@ const OUT_TEXT := Color(1.0, 0.45, 0.42, 0.85)
 # Backing plate for the centred toast, which has no panel of its own.
 const MESSAGE_BG := Color(0.05, 0.06, 0.14, 0.72)
 
-var slots: Array[Dictionary] = [] # {name: String, color: Color, lives: int}
+var slots: Array[Dictionary] = [] # {name, color, team, lives, ...}, indexed by slot
+# Empty in free-for-all, which draws one full card per slot in seat order.
+# Otherwise one entry per team: {team, title, color, lives, slots: [slot...]},
+# drawn as a header carrying the team's lives over its members' cards.
+var groups: Array[Dictionary] = []
+var subtitle: String = "one tower, three lives each"
 var max_lives: int = 3
 var active_slot: int = 0
+var crew_mate: int = -1 # co-pilot: the other half of the crew on the clock
+var next_mate: int = -1 # co-pilot: the other half of the crew that is up next
 var waiting: bool = false # true between the drop and the next turn, when nobody is on the clock
 # Who the baton is passing to, set alongside `waiting`. The banner used to
 # read "settling..." through the whole hand-off, which is a word the player
@@ -117,15 +132,20 @@ var controls: String = ""
 # listed under the banner so the whole table can see what is coming.
 var charge_max: int = 2
 var hexes: Array[Dictionary] = [] # {title, from, to, color}
+# False in co-op: there is nobody on the tower to hex, so nobody is ever
+# granted one, and an empty red slot with a key under it would advertise a
+# button that does nothing.
+var hex_slot: bool = true
 
 var _message: String = ""
 var _message_color: Color = Color.WHITE
 var _message_timer: float = 0.0
 
 # The pip currently on its way out, if any. One at a time is enough: only the
-# player who just dropped can lose a life, and the next turn is a whole
+# team that just dropped can lose a life, and the next turn is a whole
 # descent plus RESOLVE_PAUSE_EVENT away — far longer than LOSS_DURATION.
-var _loss_slot: int = -1
+# Keyed by team, which in free-for-all is the player's own slot.
+var _loss_team: int = -1
 var _loss_pip: int = -1
 var _loss_timer: float = 0.0
 
@@ -142,11 +162,12 @@ func clear_message() -> void:
 	_message = ""
 	_message_timer = 0.0
 
-## `slot` has just lost a life, and `pip_index` is the pip it spent — which is
+## `team` has just lost a life, and `pip_index` is the pip it spent — which is
 ## the life count that is *left*, since the row fills from the left. Called
 ## with the count already decremented, same as PlayerBoard._spend_heart().
-func spend_life(slot: int, pip_index: int) -> void:
-	_loss_slot = slot
+## In free-for-all a team is one player and its index is their slot.
+func spend_life(team: int, pip_index: int) -> void:
+	_loss_team = team
 	_loss_pip = pip_index
 	_loss_timer = HeartPips.LOSS_DURATION
 
@@ -154,7 +175,7 @@ func spend_life(slot: int, pip_index: int) -> void:
 ## mid-pop from the last one would play out over a fresh row of three.
 func reset() -> void:
 	clear_message()
-	_loss_slot = -1
+	_loss_team = -1
 	_loss_pip = -1
 	_loss_timer = 0.0
 
@@ -175,62 +196,97 @@ func _draw() -> void:
 
 	draw_rect(Rect2(COL_MARGIN - 10.0, 16.0, COL_W + 20.0, 62.0), PANEL_BG, true)
 	draw_string(font, Vector2(COL_MARGIN, 44.0), "PILE UP", HORIZONTAL_ALIGNMENT_LEFT, COL_W, 26, Color(1, 1, 1, 0.95))
-	draw_string(font, Vector2(COL_MARGIN, 66.0), "one tower, three lives each", HORIZONTAL_ALIGNMENT_LEFT, COL_W, 13, LABEL_TEXT)
+	draw_string(font, Vector2(COL_MARGIN, 66.0), subtitle, HORIZONTAL_ALIGNMENT_LEFT, COL_W, 13, LABEL_TEXT)
 
-	for i in range(slots.size()):
-		_draw_card(font, i)
+	var bottom: float = _draw_column(font)
 	_draw_next(font, right_x)
 	_draw_controls(font, right_x)
-	_draw_turn_banner(font)
-	_draw_hexes(font)
+	_draw_turn_banner(font, bottom)
+	_draw_hexes(font, bottom)
 	_draw_message(font)
 
-func _draw_card(font: Font, i: int) -> void:
+# The left column: one card per player in free-for-all, or a header per team
+# with its members' cards under it. Returns the y the column ends at, which
+# the banner and the hex list stack under.
+func _draw_column(font: Font) -> float:
+	var y: float = CARDS_Y
+	if groups.is_empty():
+		for i in range(slots.size()):
+			_draw_card(font, i, y, CARD_H, true)
+			y += CARD_H + CARD_GAP
+		return y
+	for g: Dictionary in groups:
+		_draw_team_head(font, g, y)
+		y += TEAM_HEAD_H + 4.0
+		for s: int in g["slots"]:
+			_draw_card(font, s, y, TEAM_CARD_H, false)
+			y += TEAM_CARD_H + 4.0
+		y += TEAM_GAP
+	return y
+
+# The team's name and its one row of lives — the pool both members spend.
+func _draw_team_head(font: Font, g: Dictionary, y: float) -> void:
+	var color: Color = g["color"]
+	var alive: bool = int(g["lives"]) > 0
+	draw_rect(Rect2(COL_MARGIN, y, COL_W, TEAM_HEAD_H), PANEL_BG, true)
+	draw_rect(Rect2(COL_MARGIN, y + TEAM_HEAD_H - 3.0, COL_W, 3.0), Color(color.r, color.g, color.b, 0.85 if alive else 0.25), true)
+	var tx: float = COL_MARGIN + PANEL_PAD
+	draw_string(font, Vector2(tx, y + 20.0), g["title"], HORIZONTAL_ALIGNMENT_LEFT, COL_W, 15,
+		Color(color.r, color.g, color.b, 1.0) if alive else OUT_TEXT)
+	if not alive:
+		draw_string(font, Vector2(tx + 120.0, y + 20.0), "OUT", HORIZONTAL_ALIGNMENT_LEFT, COL_W, 15, OUT_TEXT)
+	_draw_pips(tx, y + TEAM_HEAD_H - 17.0, color, int(g["lives"]), int(g["team"]))
+
+func _draw_card(font: Font, i: int, y: float, h: float, with_pips: bool) -> void:
 	var slot: Dictionary = slots[i]
 	var color: Color = slot["color"]
 	var alive: bool = slot["lives"] > 0
-	var is_active: bool = (i == active_slot) and alive and not waiting
+	var is_active: bool = (i == active_slot or i == crew_mate) and alive and not waiting
 
-	var y: float = CARDS_Y + float(i) * (CARD_H + CARD_GAP)
-	var box := Rect2(COL_MARGIN, y, COL_W, CARD_H)
+	var box := Rect2(COL_MARGIN, y, COL_W, h)
 	draw_rect(box, CARD_BG_ACTIVE if is_active else CARD_BG, true)
 	if is_active:
 		draw_rect(box, Color(color.r, color.g, color.b, 0.9), false, 2.0)
 	draw_rect(
-		Rect2(COL_MARGIN, y, STRIPE_W, CARD_H),
+		Rect2(COL_MARGIN, y, STRIPE_W, h),
 		color if alive else Color(color.r, color.g, color.b, 0.25), true
 	)
 
 	var tx: float = COL_MARGIN + STRIPE_W + PANEL_PAD
+	var name_y: float = y + (30.0 if with_pips else 34.0)
 	draw_string(
-		font, Vector2(tx, y + 30.0), slot["name"], HORIZONTAL_ALIGNMENT_LEFT, COL_W, 20,
+		font, Vector2(tx, name_y), slot["name"], HORIZONTAL_ALIGNMENT_LEFT, COL_W, 20,
 		Color.WHITE if alive else OUT_TEXT
 	)
 	if not alive:
-		draw_string(font, Vector2(tx + 48.0, y + 30.0), "OUT", HORIZONTAL_ALIGNMENT_LEFT, COL_W, 15, OUT_TEXT)
+		draw_string(font, Vector2(tx + 48.0, name_y), "OUT", HORIZONTAL_ALIGNMENT_LEFT, COL_W, 15, OUT_TEXT)
 	elif not slot.get("tags", []).is_empty():
 		# What is being done to this player right now, in the skill's own
 		# word. One fits between the name and the slots; more than one is
 		# joined and clipped, which is the honest amount of room there is.
 		var tags: Array = slot["tags"]
-		draw_string(font, Vector2(tx + 48.0, y + 30.0), " · ".join(tags), HORIZONTAL_ALIGNMENT_LEFT, 74.0, 12, TAG_TEXT)
+		draw_string(font, Vector2(tx + 48.0, name_y), " · ".join(tags), HORIZONTAL_ALIGNMENT_LEFT, 74.0, 12, TAG_TEXT)
 
 	if alive:
 		_draw_charge(slot, y, color)
-		_draw_slots(font, slot, y)
+		_draw_slots(font, slot, y, h)
 
-	# Lives as pips rather than a number — from across a couch, "two left"
-	# should not need reading. The pip is Don't Crash's heart, re-hued into
-	# this player's own colour by the same rule (HeartPips), so the two modes
-	# spell a life the same way.
+	# A team card has no pips: its lives are the team's, on the header above.
+	if with_pips:
+		_draw_pips(tx, y + h - PIP_ROW_UP, color, int(slot["lives"]), int(slot.get("team", i)))
+
+# Lives as pips rather than a number — from across a couch, "two left"
+# should not need reading. The pip is Don't Crash's heart, re-hued into the
+# owner's colour by the same rule (HeartPips), so the two modes spell a life
+# the same way. `x` is the left edge of the row, `pip_y` its centre line.
+func _draw_pips(x: float, pip_y: float, color: Color, have: int, team: int) -> void:
 	var pip: Vector2 = HeartPips.size_at(PIP_H)
 	var pip_tex: Texture2D = HeartPips.tinted(color)
-	var pip_y: float = y + CARD_H - PIP_ROW_UP
 	for h in range(max_lives):
-		var c := Vector2(tx + pip.x * 0.5 + float(h) * PIP_GAP, pip_y)
-		if h < slot["lives"]:
+		var c := Vector2(x + pip.x * 0.5 + float(h) * PIP_GAP, pip_y)
+		if h < have:
 			_draw_pip(pip_tex, c, pip, 1.0, 1.0)
-		elif h == _loss_pip and i == _loss_slot and _loss_timer > 0.0:
+		elif h == _loss_pip and team == _loss_team and _loss_timer > 0.0:
 			# The one just spent, swelling out of its slot as it fades — so it
 			# is seen to leave rather than being absent the next time anyone
 			# happens to look at the card.
@@ -261,14 +317,16 @@ func _draw_charge(slot: Dictionary, y: float, color: Color) -> void:
 # The two skill slots, stacked at the card's right edge with their cast keys
 # underneath. An empty slot is a faint square so the space reads as "nothing
 # here yet" rather than as nothing; a full one is the glyph on its disc.
-func _draw_slots(font: Font, slot: Dictionary, y: float) -> void:
+func _draw_slots(font: Font, slot: Dictionary, y: float, h: float) -> void:
 	var right: float = COL_MARGIN + COL_W - PANEL_PAD
-	var sy: float = y + (CARD_H - SLOT_SIZE) * 0.5 - 4.0
+	var sy: float = y + (h - SLOT_SIZE) * 0.5 - 4.0
 	var keys: PackedStringArray = str(slot.get("cast_label", "")).split("/")
 	var entries := [
 		[right - SLOT_SIZE * 2.0 - SLOT_GAP, slot.get("held_self", ""), SLOT_SELF, keys[0].strip_edges() if keys.size() > 0 else ""],
 		[right - SLOT_SIZE, slot.get("held_opponent", ""), SLOT_OPPONENT, keys[1].strip_edges() if keys.size() > 1 else ""],
 	]
+	if not hex_slot:
+		entries = [[right - SLOT_SIZE, slot.get("held_self", ""), SLOT_SELF, keys[0].strip_edges() if keys.size() > 0 else ""]]
 	for entry in entries:
 		var sx: float = entry[0]
 		var id: String = entry[1]
@@ -322,33 +380,40 @@ func _draw_controls(font: Font, x: float) -> void:
 
 # Deliberately in the left column rather than across the top centre: that
 # strip is the descending brick's headroom now, and a banner there collided
-# with a vertical I piece.
-func _draw_turn_banner(font: Font) -> void:
+# with a vertical I piece. In co-pilot it names the whole crew, at a size
+# that fits two names in the column.
+func _draw_turn_banner(font: Font, bottom: float) -> void:
 	if slots.is_empty():
 		return
-	var y: float = CARDS_Y + float(slots.size()) * (CARD_H + CARD_GAP) + 20.0
+	var y: float = bottom + 20.0
 	draw_rect(Rect2(COL_MARGIN, y - 24.0, COL_W, 36.0), PANEL_BG, true)
 	if waiting:
 		var up: Dictionary = slots[clampi(next_slot, 0, slots.size() - 1)]
+		var who: String = up["name"]
+		if next_mate >= 0 and next_mate < slots.size():
+			who = "%s + %s" % [up["name"], slots[next_mate]["name"]]
 		draw_string(
-			font, Vector2(COL_MARGIN + PANEL_PAD, y), "%s — GET READY" % up["name"],
-			HORIZONTAL_ALIGNMENT_LEFT, COL_W, 18,
+			font, Vector2(COL_MARGIN + PANEL_PAD, y), "%s — GET READY" % who,
+			HORIZONTAL_ALIGNMENT_LEFT, COL_W, 16 if next_mate >= 0 else 18,
 			Color(up["color"].r, up["color"].g, up["color"].b, 0.75)
 		)
 		return
 	var slot: Dictionary = slots[active_slot]
+	var text: String = "%s — YOUR BRICK" % slot["name"]
+	if crew_mate >= 0 and crew_mate < slots.size():
+		text = "%s + %s — YOUR BRICK" % [slot["name"], slots[crew_mate]["name"]]
 	draw_string(
-		font, Vector2(COL_MARGIN + PANEL_PAD, y), "%s — YOUR BRICK" % slot["name"],
-		HORIZONTAL_ALIGNMENT_LEFT, COL_W, 20, slot["color"]
+		font, Vector2(COL_MARGIN + PANEL_PAD, y), text,
+		HORIZONTAL_ALIGNMENT_LEFT, COL_W, 17 if crew_mate >= 0 else 20, slot["color"]
 	)
 
 # Opponent skills in flight: cast, and waiting for their target's next turn.
 # Under the banner, so the player about to receive one sees it coming while
 # they wait — a hex nobody could see would just read as the game glitching.
-func _draw_hexes(font: Font) -> void:
+func _draw_hexes(font: Font, bottom: float) -> void:
 	if hexes.is_empty() or slots.is_empty():
 		return
-	var y: float = CARDS_Y + float(slots.size()) * (CARD_H + CARD_GAP) + 20.0 + 24.0
+	var y: float = bottom + 20.0 + 24.0
 	draw_rect(Rect2(COL_MARGIN, y, COL_W, 10.0 + 20.0 * float(hexes.size())), PANEL_BG, true)
 	var line: float = y + 18.0
 	for h: Dictionary in hexes:

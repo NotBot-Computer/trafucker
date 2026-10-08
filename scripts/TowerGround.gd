@@ -37,17 +37,27 @@ const GROUND_LINE_PX := 874.0
 const UNDER_COLOR := Color8(74, 54, 48)
 
 var ground_y: float = 170.0
-var view_width: float = 1500.0
+var view_size: Vector2 = Vector2(1500.0, 800.0)
 
-func configure(world_ground_y: float, width: float) -> void:
+# `view` is the visible area in WORLD units (TowerMode._view_world()).
+func configure(world_ground_y: float, view: Vector2) -> void:
 	ground_y = world_ground_y
-	view_width = width
+	view_size = view
 	queue_redraw()
+
+# How much the art is scaled to fill `view` — the larger of the two fits, so
+# it always covers. Shared with TowerBackground on purpose: the two layers
+# are one picture cut in two, and they only line up if they scale alike. On
+# the full 1500x800 screen this is exactly fit-to-width (the art is 3:2, the
+# screen wider than that), so nothing changed there when it stopped being.
+static func scale_for(view: Vector2, tex_size: Vector2) -> float:
+	return maxf(view.x / tex_size.x, view.y / tex_size.y)
 
 func _draw() -> void:
 	var tex_size: Vector2 = ART.get_size()
-	var s: float = view_width / tex_size.x
+	var s: float = scale_for(view_size, tex_size)
+	var w: float = tex_size.x * s
 	var src := Rect2(0.0, GROUND_LINE_PX, tex_size.x, tex_size.y - GROUND_LINE_PX)
 	var band_h: float = src.size.y * s
-	draw_texture_rect_region(ART, Rect2(-view_width * 0.5, ground_y, view_width, band_h), src)
-	draw_rect(Rect2(-view_width * 0.5, ground_y + band_h, view_width, 1200.0), UNDER_COLOR, true)
+	draw_texture_rect_region(ART, Rect2(-w * 0.5, ground_y, w, band_h), src)
+	draw_rect(Rect2(-w * 0.5, ground_y + band_h, w, 1200.0), UNDER_COLOR, true)

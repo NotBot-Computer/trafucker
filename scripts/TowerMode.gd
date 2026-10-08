@@ -259,6 +259,56 @@ const WEDGE_GRACE := 6.0
 
 # --- Turn structure --------------------------------------------------------
 const START_LIVES := 3
+# A team's shared pool, in every variant that has teams. Per *team*, not per
+# member: lives are spent per turn, a team takes the same number of turns
+# whether it has one member or two, and so a 2v1 is two heads against one on
+# the same clock and the same pool. Six is a 2v2's three each, pooled.
+# Measured with TeamProbe's blind aim (spread 0.3): 18.0 turns a 2v2 match
+# against free-for-all's 22.5 at four players; five lives made it 15.4, which
+# is under four bricks a player. A first guess at what plays well; unplayed.
+const TEAM_LIVES := 6
+# The storm is co-op's opponent and casts hexes like a player, as slot -1.
+# A cold blue-grey, because every real colour on the skin table is somebody's.
+const STORM_COLOR := Color(0.62, 0.70, 0.86)
+
+# --- Goal lines: co-op and the race ------------------------------------------
+# The two variants with one team per tower cannot end on "last one standing"
+# — there is nobody to outlast — so they end on height instead: settle the
+# tower with its top over the line and you have won; run out of lives first
+# and you have not. The line is drawn across the play column and is on screen
+# from the first brick (the resting shot shows ~20 cells above the platform),
+# so the target is something you can see rather than a number to remember.
+#
+# COOP_GOAL_CELLS and COOP_LIVES are set against TeamProbe's blind aim, which
+# is a floor on what people manage (TowerProbe's header): see the co-op
+# section of docs/PROJECT_STATE.md for the measurement. Both unplayed.
+const COOP_LIVES := 5
+const COOP_GOAL_CELLS := 14.0
+# A settled tower's top sits a hair under where its bricks' cells would put
+# it, because landed bricks lean and sink a fraction of a pixel. A tenth of a
+# cell — four pixels — is less than anyone can see against the line.
+const GOAL_SLACK_CELLS := 0.1
+const GOAL_COLOR := Color(1.0, 0.80, 0.22, 0.95)
+const GOAL_SHADOW := Color(0.06, 0.08, 0.20, 0.55)
+
+# The race: one team per tower, both towers building at once, first to settle
+# over the line wins — and a team that runs out of lives first loses it. The
+# line is lower than co-op's because the race has no second chance at it and
+# no storm pushing the pace: the clock is the other team. Each tower gets
+# half the screen, so the camera pulls back from 29 cells to 34 to keep the
+# play column (ten cells, aim bound included) clear of the HUD columns in a
+# 750px-wide view. Both unplayed; see the race section of PROJECT_STATE.
+const RACE_LIVES := 5
+const RACE_GOAL_CELLS := 10.0
+const RACE_VISIBLE_CELLS := 34.0
+
+# The storm casts a random hex from the opponent pool at whoever is up next,
+# every STORM_EVERY turns — and every STORM_EVERY_HIGH once the tower is past
+# half the goal, so the last stretch is the stormy one. Queued at the end of
+# a turn rather than the start of the next, so it is listed under the banner
+# through the whole hand-off, exactly like a hex a rival sent.
+const STORM_EVERY := 3
+const STORM_EVERY_HIGH := 2
 
 # The beat between "everything stopped" and the next brick, and there are two
 # of them because there are two kinds of turn. A turn that cost somebody a
@@ -427,8 +477,48 @@ const CHARGE_TO_SKILL := 2
 @onready var skill_screen: TowerSkillScreen = $HUD/SkillScreen
 
 var state := "piloting" # countdown -> piloting -> settling -> resolving -> piloting, or gameover
+# Per TEAM, not per player — see "Teams" below. In free-for-all every player is
+# a team of one with the same index as their slot, so `lives[slot]` still
+# means exactly what it always did there, and the probes that read it do too.
 var lives: Array[int] = []
 var active_slot: int = 0
+
+# --- Teams -------------------------------------------------------------------
+# Every variant is one idea applied to the same loop: a turn belongs to a
+# *team*, a team is a set of slots sharing a life pool, and the team's turns
+# rotate through its members. Free-for-all is every player alone on a team of
+# one, which is why it needed no special case and plays exactly as it did.
+#
+# Turn order is round-robin over the living teams, and inside a team over its
+# members — so 2v2 goes left, right, left, right with each side alternating
+# who flies, and 2v1 gives the lone player every other turn rather than every
+# third. The fault rule is unchanged in spirit: a turn's falls cost the team
+# that was on the clock.
+var variant: int = -1 # GameSettings.TOWER_*; read in _ready() unless a host set it first
+# The race host (TowerRace) when this tower is one of two side by side, and
+# null when it is the whole game. A hosted tower takes no input of its own,
+# shows no game-over overlay and reports its result upward instead.
+var host = null
+var members: Array[int] = [] # slots building on THIS tower; every slot unless a host says otherwise
+var visible_cells: float = VISIBLE_CELLS # a host may pull the camera back further
+var team_of: Array[int] = [] # per slot
+var team_count: int = 0
+var team_cursor: Array[int] = [] # per team: how many turns it has taken, i.e. whose go it is next
+var turn_team: int = -1 # the team on the clock (or the last one to be)
+var crew_mate: int = -1 # co-pilot only: the player turning the brick; -1 everywhere else
+var winner_team: int = -1 # set when a goal line decides the match rather than a last survivor
+var turns_flown: Array[int] = [] # per slot, for the end screen
+var bricks_dropped: Array[int] = [] # per slot, for the end screen
+# The race deals both towers the same bricks in the same order, so it is a
+# building contest and not a draw: the host hands both the same non-zero
+# seed and each tower draws from its own generator. Zero — every variant
+# but the race — draws from the global RNG exactly as the mode always has,
+# which is what keeps every other probe's brick sequence where it was.
+var brick_seed: int = 0
+var _brick_rng: RandomNumberGenerator = null
+var goal_cells: float = 0.0 # 0 = no goal line (free-for-all, teams, co-pilot)
+var storm_in: int = 0 # co-op: resolved turns until the storm casts again
+var storms: int = 0 # co-op: hexes the storm has sent this match
 var active_piece: TowerPiece = null
 var next_index: int = 0
 
@@ -468,6 +558,11 @@ var queued_effects: Array = []
 
 func _ready() -> void:
 	countdown.finished.connect(_on_countdown_finished)
+	if variant < 0:
+		variant = GameSettings.tower_variant
+	if members.is_empty():
+		for s in range(GameSettings.player_count):
+			members.append(s)
 
 	var rect := RectangleShape2D.new()
 	rect.size = Vector2(PLATFORM_CELLS * CELL, PLATFORM_THICKNESS)
@@ -484,7 +579,7 @@ func _ready() -> void:
 	platform.physics_material_override = mat
 
 	var screen: Vector2 = get_viewport().get_visible_rect().size
-	cam_zoom = screen.y / (VISIBLE_CELLS * CELL)
+	cam_zoom = screen.y / (visible_cells * CELL)
 	camera.zoom = Vector2.ONE * cam_zoom
 	camera.make_current()
 
@@ -492,11 +587,11 @@ func _ready() -> void:
 	# agree about where the ground is: TowerGround puts it at GROUND_Y in the
 	# world, and the backdrop is told where that lands on screen in the
 	# resting shot, which is the only place they are required to line up.
-	# `configure` takes a *world* width — TowerGround draws in world space,
+	# `configure` takes a *world* size — TowerGround draws in world space,
 	# under the camera — while `set_ground_screen_y` takes a screen position,
 	# since the backdrop is a CanvasLayer the camera never touches. GROUND_Y
 	# is a world distance, so it crosses that boundary scaled by the zoom.
-	ground.configure(GROUND_Y, _view_world().x)
+	ground.configure(GROUND_Y, _view_world())
 	backdrop.set_ground_screen_y(GROUND_Y * cam_zoom + CAM_GROUND_FRAC * screen.y)
 
 	skill_overlay.mode = self
@@ -515,15 +610,36 @@ func _start_match() -> void:
 	# Before the arrays below are rebuilt: a deactivate() may look at
 	# the slot it was attached to.
 	_clear_skill_effects()
+	_setup_teams()
 	lives = []
+	team_cursor = []
+	for t in range(team_count):
+		# A team with nobody on this tower (the other side of a race) is
+		# simply never alive here, so turn order and the end check skip it
+		# without having to know why.
+		lives.append(_start_lives() if not _team_members(t).is_empty() else 0)
+		team_cursor.append(0)
 	charge = []
 	held_self = []
 	held_opponent = []
+	turns_flown = []
+	bricks_dropped = []
 	for _i in range(GameSettings.player_count):
-		lives.append(START_LIVES)
 		charge.append(0)
 		held_self.append("")
 		held_opponent.append("")
+		turns_flown.append(0)
+		bricks_dropped.append(0)
+	turn_team = team_count - 1 # so the first _begin_turn() advances onto team 0
+	crew_mate = -1
+	winner_team = -1
+	goal_cells = _goal_for_variant()
+	storm_in = STORM_EVERY
+	storms = 0
+	_brick_rng = null
+	if brick_seed != 0:
+		_brick_rng = RandomNumberGenerator.new()
+		_brick_rng.seed = brick_seed
 
 	stack_top_y = 0.0
 	best_height = 0
@@ -539,8 +655,9 @@ func _start_match() -> void:
 	# over this one's fresh row of three.
 	hud.reset()
 
-	# So the first _begin_turn() advances onto slot 0.
-	active_slot = GameSettings.player_count - 1
+	# Nobody is on the clock yet; this is only what the HUD reads during the
+	# countdown, and _begin_turn() picks the real first player from turn_team.
+	active_slot = members.back()
 
 	# `countdown` is a state of its own rather than a paused `piloting`:
 	# _physics_process's match has no branch for it, so the descent, the
@@ -555,15 +672,23 @@ func _on_countdown_finished() -> void:
 	_begin_turn()
 
 func _begin_turn() -> void:
-	if _living_count() <= 1:
+	if _decided():
 		_end_match()
 		return
-	var slot: int = _next_living_slot(active_slot)
-	if slot == -1:
+	var team: int = _next_living_team(turn_team)
+	if team == -1:
 		_end_match()
 		return
 
-	active_slot = slot
+	# The team's next member flies, and the rotation moves on for next time.
+	var crew: Array[int] = _team_members(team)
+	var go: int = team_cursor[team]
+	team_cursor[team] = go + 1
+	turn_team = team
+	active_slot = crew[go % crew.size()]
+	crew_mate = crew[(go + 1) % crew.size()] if variant == GameSettings.TOWER_COPILOT and crew.size() > 1 else -1
+	turns_flown[active_slot] += 1
+	_follow_the_crew(team)
 	_recompute_stack_top()
 
 	# Hexes queued against this player join the live list *before* the spawn
@@ -651,25 +776,26 @@ func _resolve_turn() -> void:
 	bricks_placed += 1
 	best_height = max(best_height, int(round(-stack_top_y / CELL)))
 
+	var team: int = team_of[active_slot]
 	if fallen_this_turn > 0:
-		lives[active_slot] = max(0, lives[active_slot] - 1)
+		lives[team] = max(0, lives[team] - 1)
+		bricks_dropped[active_slot] += fallen_this_turn
 		# The count is already down, so it indexes the pip just spent — the
 		# same convention PlayerBoard._spend_heart() uses on the other mode's
 		# row. The HUD swells it out of its slot rather than blanking it.
-		hud.spend_life(active_slot, lives[active_slot])
-		var who: String = GameSettings.PLAYER_CONFIGS[active_slot]["name"]
-		var what: String = "BRICK" if fallen_this_turn == 1 else "%d BRICKS" % fallen_this_turn
-		if lives[active_slot] <= 0:
-			hud.show_message("%s DROPPED %s — OUT!" % [who, what], Color(1.0, 0.42, 0.36))
-		else:
-			hud.show_message("%s DROPPED %s   −1 LIFE" % [who, what], Color(1.0, 0.66, 0.30))
+		hud.spend_life(team, lives[team])
+		_announce_fall(team)
 
 	# A clean placement is the charge. Deliberately not "any placement": a
 	# skill has to be earned by building, or the player who is knocking the
-	# tower over every turn is the one being handed the tools.
-	if fallen_this_turn == 0 and lives[active_slot] > 0:
+	# tower over every turn is the one being handed the tools. In co-pilot both
+	# pairs of hands built it, so both are paid.
+	if fallen_this_turn == 0 and lives[team] > 0:
 		charge[active_slot] = mini(CHARGE_TO_SKILL, charge[active_slot] + 1)
 		_try_grant(active_slot)
+		if crew_mate >= 0:
+			charge[crew_mate] = mini(CHARGE_TO_SKILL, charge[crew_mate] + 1)
+			_try_grant(crew_mate)
 
 	# The turn is over for every effect riding it, and the ones that have run
 	# their turns out leave here — after the falls were counted, so an effect
@@ -683,12 +809,27 @@ func _resolve_turn() -> void:
 			finished.append(e)
 	for e in finished:
 		_retire(e)
-	if lives[active_slot] <= 0:
-		_drop_slot_skills(active_slot)
+	if lives[team] <= 0:
+		for s in _team_members(team):
+			_drop_slot_skills(s)
+
+	# Height decides a goal-line variant, but only on a tower that is at rest
+	# — which this is, since a turn only resolves once the world has stopped.
+	# _begin_turn() sees winner_team and ends the match from there.
+	if goal_cells > 0.0 and lives[team] > 0 and _height_cells() >= goal_cells - GOAL_SLACK_CELLS:
+		winner_team = team
+	elif variant == GameSettings.TOWER_COOP and lives[team] > 0:
+		_storm_tick()
 
 	state = "resolving"
 	resolve_timer = RESOLVE_PAUSE_EVENT if fallen_this_turn > 0 else RESOLVE_PAUSE_QUIET
 	_refresh_hud()
+	# In the race the result is reported the frame it is known, not after the
+	# resolve pause: that pause is longer after a turn that cost a life, and
+	# a race must not be decided by which tower's toast was longer. Last, so
+	# the host's halt() is the final word on `state`.
+	if host != null and _decided():
+		host.tower_finished(self)
 
 func _end_match() -> void:
 	state = "gameover"
@@ -698,20 +839,129 @@ func _end_match() -> void:
 		active_piece.queue_free()
 	active_piece = null
 
-	var winner: int = -1
-	for i in range(lives.size()):
-		if lives[i] > 0:
-			winner = i
-			break
+	# A tower in the race does not announce anything: one result covers both
+	# towers, so the host owns the overlay. It is told unless it is the one
+	# stopping us (halt()), which is how the second tower ends.
+	if host != null:
+		_refresh_hud()
+		if not _halting:
+			host.tower_finished(self)
+		return
 
-	overlay_title.text = "NOBODY WINS" if winner == -1 else "%s WINS" % GameSettings.PLAYER_CONFIGS[winner]["name"]
-	var lines: String = "Tower reached %d bricks high — %d placed\n\n" % [best_height, bricks_placed]
-	for i in range(lives.size()):
-		var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[i]
-		lines += "%s: %s\n" % [cfg["name"], "OUT" if lives[i] <= 0 else "%d lives left" % lives[i]]
-	overlay_body.text = lines.strip_edges()
+	# A goal line decides a match outright; otherwise the winner is whoever
+	# is left standing, and only on a tower that had more than one team on it.
+	var winner: int = winner_team
+	if winner == -1 and _teams_here().size() > 1:
+		for t in _teams_here():
+			if lives[t] > 0:
+				winner = t
+				break
+
+	if variant == GameSettings.TOWER_FFA:
+		overlay_title.text = "NOBODY WINS" if winner == -1 else "%s WINS" % GameSettings.PLAYER_CONFIGS[winner]["name"]
+		var lines: String = "Tower reached %d bricks high — %d placed\n\n" % [best_height, bricks_placed]
+		for i in range(lives.size()):
+			var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[i]
+			lines += "%s: %s\n" % [cfg["name"], "OUT" if lives[i] <= 0 else "%d lives left" % lives[i]]
+		overlay_body.text = lines.strip_edges()
+	else:
+		overlay_title.text = _result_title(winner)
+		overlay_body.text = _result_body()
 	overlay.visible = true
 	_refresh_hud()
+
+var _halting := false
+
+# The race host stopping this tower, because the race was decided — on this
+# tower or on the other one. Mid-descent is fine: _end_match() takes the held
+# brick away and clears every skill, same as any game over.
+func halt() -> void:
+	if state == "gameover":
+		return
+	_halting = true
+	_end_match()
+	_halting = false
+
+# A hex cast on the other tower in the race, arriving here. It goes to
+# whoever flies this tower's next brick — the turn in progress, if there is
+# one, is somebody else's and is left alone, exactly as a hex never lands on
+# the turn it was cast in. Returns who it was queued on; empty if refused.
+func receive_hex(id: String, caster: int) -> Array[int]:
+	var out: Array[int] = []
+	if state == "gameover":
+		return out
+	var probe: TowerSkill = TowerSkillCatalog.make(id, self, caster, caster)
+	if probe == null:
+		return out
+	if probe.affects_all_opponents():
+		for s in members:
+			if lives[team_of[s]] > 0:
+				out.append(s)
+	else:
+		var next: int = _next_turn_slot()
+		if next >= 0:
+			out.append(next)
+	if out.is_empty():
+		return out
+	_queue_hex(id, caster, out)
+	var names: Array[String] = []
+	for t in out:
+		names.append(slot_name(t))
+	var c: Color = _slot_color(caster)
+	hud.show_message("%s → %s — %s" % [slot_name(caster), " + ".join(names), TowerSkillCatalog.title_of(id)], Color(c.r, c.g, c.b, 1.0))
+	_refresh_hud()
+	return out
+
+# One line for the race's result screen: this tower's team, how high it got
+# and how it got there.
+func team_summary() -> String:
+	var t: int = _teams_here()[0] if not _teams_here().is_empty() else 0
+	var parts: Array[String] = []
+	for s in _team_members(t):
+		parts.append("%s %d flown, %d dropped" % [slot_name(s), turns_flown[s], bricks_dropped[s]])
+	return "%s — %d high, %s — %s" % [
+		GameSettings.tower_team_name(t, variant),
+		int(round(_height_cells())),
+		"OUT" if lives[t] <= 0 else "%d %s left" % [lives[t], "life" if lives[t] == 1 else "lives"],
+		"  ·  ".join(parts),
+	]
+
+func _result_title(winner: int) -> String:
+	if variant == GameSettings.TOWER_COOP:
+		return "TOWER COMPLETE!" if winner >= 0 else "THE STORM WINS"
+	if winner == -1:
+		return "NOBODY WINS"
+	return "%s WINS" % GameSettings.tower_team_name(winner, variant)
+
+# One line per team — its pool, then each member's own tally — and the
+# wrecking ball. The tally is the point of the line: a shared pool hides who
+# spent it, and on a couch that is exactly the thing everybody wants to know.
+func _result_body() -> String:
+	var lines: String = "Tower reached %d bricks high — %d placed\n\n" % [best_height, bricks_placed]
+	if variant == GameSettings.TOWER_COOP:
+		lines = "Tower reached %d of the %d needed — %d bricks placed, %d %s from the storm\n\n" % [
+			best_height, int(goal_cells), bricks_placed, storms, "hex" if storms == 1 else "hexes"]
+	# In co-pilot a turn is credited to whoever steered it, so the tally
+	# answers the question a crew actually argues about: which way round
+	# were we better?
+	var flew: String = "steered" if variant == GameSettings.TOWER_COPILOT else "flown"
+	for t in _teams_here():
+		var parts: Array[String] = []
+		for s in _team_members(t):
+			parts.append("%s %d %s, %d dropped" % [slot_name(s), turns_flown[s], flew, bricks_dropped[s]])
+		lines += "%s — %s — %s\n" % [
+			GameSettings.tower_team_name(t, variant),
+			"OUT" if lives[t] <= 0 else "%d %s left" % [lives[t], "life" if lives[t] == 1 else "lives"],
+			"  ·  ".join(parts),
+		]
+	var worst: int = -1
+	for s in members:
+		if bricks_dropped[s] > 0 and (worst == -1 or bricks_dropped[s] > bricks_dropped[worst]):
+			worst = s
+	if worst >= 0:
+		lines += "\nWrecking ball: %s, %d %s dropped" % [
+			slot_name(worst), bricks_dropped[worst], "brick" if bricks_dropped[worst] == 1 else "bricks"]
+	return lines.strip_edges()
 
 # --- Per-frame -------------------------------------------------------------
 
@@ -1027,7 +1277,7 @@ func _next_brick() -> int:
 	var total := 0.0
 	for b: Dictionary in GameSettings.BRICKS:
 		total += CLASSIC_BIAS if b["classic"] else 1.0
-	var pick: float = randf() * total
+	var pick: float = (_brick_rng.randf() if _brick_rng != null else randf()) * total
 	for i in range(GameSettings.BRICKS.size()):
 		pick -= CLASSIC_BIAS if GameSettings.BRICKS[i]["classic"] else 1.0
 		if pick < 0.0:
@@ -1043,27 +1293,179 @@ func _camera_target() -> float:
 	# the climbing shot only wins once it actually needs to.
 	return minf(resting, climbing)
 
-# --- Players ---------------------------------------------------------------
+# --- Players and teams -----------------------------------------------------
 
-func _living_count() -> int:
+func _setup_teams() -> void:
+	team_of = []
+	team_count = 0
+	for s in range(GameSettings.player_count):
+		var t: int = GameSettings.tower_team_of(s, variant)
+		team_of.append(t)
+		team_count = maxi(team_count, t + 1)
+
+func _start_lives() -> int:
+	match variant:
+		GameSettings.TOWER_FFA:
+			return START_LIVES
+		GameSettings.TOWER_COOP:
+			return COOP_LIVES
+		GameSettings.TOWER_RACE:
+			return RACE_LIVES
+	return TEAM_LIVES
+
+func _goal_for_variant() -> float:
+	match variant:
+		GameSettings.TOWER_COOP:
+			return COOP_GOAL_CELLS
+		GameSettings.TOWER_RACE:
+			return RACE_GOAL_CELLS
+	return 0.0
+
+# The settled tower's height, in cells, from the platform to its top.
+func _height_cells() -> float:
+	return -stack_top_y / CELL
+
+# Co-op only, once per resolved turn the crew survived. Counts down, and at
+# zero sends a random hex at whoever flies next — as slot -1, which every
+# name and colour lookup reads as THE STORM.
+func _storm_tick() -> void:
+	storm_in -= 1
+	if storm_in > 0:
+		return
+	storm_in = STORM_EVERY_HIGH if _height_cells() >= goal_cells * 0.5 else STORM_EVERY
+	var pool: Array[String] = TowerSkillCatalog.ids_in("opponent")
+	var target: int = _next_turn_slot()
+	if pool.is_empty() or target < 0:
+		return
+	var id: String = pool[randi() % pool.size()]
+	_queue_hex(id, -1, [target])
+	storms += 1
+	# Only on a quiet turn: a turn that cost a life already has a toast up,
+	# and the hex is listed under the banner either way.
+	if fallen_this_turn == 0:
+		hud.show_message("THE STORM SENDS %s AT %s" % [TowerSkillCatalog.title_of(id), slot_name(target)], STORM_COLOR)
+
+# A team's members on THIS tower, in seat order — which is also the order
+# they take the team's turns in.
+func _team_members(team: int) -> Array[int]:
+	var out: Array[int] = []
+	for s in members:
+		if team_of[s] == team:
+			out.append(s)
+	return out
+
+func _teams_here() -> Array[int]:
+	var out: Array[int] = []
+	for s in members:
+		if not out.has(team_of[s]):
+			out.append(team_of[s])
+	out.sort()
+	return out
+
+# The next team after `from` in turn order that still has lives and somebody
+# on this tower to spend them. Wraps round to `from` itself, which is what a
+# one-team tower (co-op, either side of a race) needs.
+func _next_living_team(from: int) -> int:
+	if team_count == 0:
+		return -1
+	for step in range(1, team_count + 1):
+		var t: int = (from + step + team_count) % team_count
+		if lives[t] > 0 and not _team_members(t).is_empty():
+			return t
+	return -1
+
+# Co-pilot only. An effect is attached to a slot, and every hook is read off
+# the slot on the clock — but a crew swaps who that is every turn, so an
+# effect on the crew would otherwise skip every other one of its turns (a
+# two-turn Tailor would measure on P1's turn and then wait for P1 to steer
+# again, two crew turns later). Moving every effect on the crew onto this
+# turn's pilot, before the queue is read and before the brick spawns, makes
+# the crew the thing a skill is attached to. Skills only ever compare
+# `target` with `mode.active_slot` (and Rubble names it in a toast), so a
+# target that moves between turns is invisible to them.
+func _follow_the_crew(team: int) -> void:
+	if crew_mate < 0:
+		return
+	for e in active_effects + queued_effects:
+		if e.target >= 0 and team_of[e.target] == team:
+			e.target = active_slot
+
+# Who will fly `team`'s next brick, without moving the rotation.
+func _pilot_of(team: int) -> int:
+	var crew: Array[int] = _team_members(team)
+	if crew.is_empty():
+		return -1
+	return crew[team_cursor[team] % crew.size()]
+
+# Whoever is up after the current turn — the HUD's "GET READY", and the
+# target of an ordinary hex.
+func _next_turn_slot() -> int:
+	var t: int = _next_living_team(turn_team)
+	return _pilot_of(t) if t >= 0 else -1
+
+func _living_teams() -> int:
 	var n := 0
-	for l in lives:
-		if l > 0:
+	for t in _teams_here():
+		if lives[t] > 0:
 			n += 1
 	return n
 
-func _next_living_slot(from: int) -> int:
-	var count: int = lives.size()
-	for step in range(1, count + 1):
-		var s: int = (from + step) % count
-		if lives[s] > 0:
-			return s
-	return -1
+# Over when a goal line has been reached, when nobody is left, or — on a tower
+# with rivals on it — when only one team is. A one-team tower (co-op, a side
+# of the race) is never "won" by being the last one standing; it was always
+# the only one.
+func _decided() -> bool:
+	if winner_team >= 0:
+		return true
+	var alive: int = _living_teams()
+	if alive == 0:
+		return true
+	return _teams_here().size() > 1 and alive <= 1
 
 func _slot_color(slot: int) -> Color:
+	if slot < 0:
+		return STORM_COLOR
 	if slot < GameSettings.skin_colors.size():
 		return GameSettings.skin_colors[slot]
 	return Color(0.8, 0.8, 0.85)
+
+# A team is drawn in its first member's colour. Teams are seats rather than a
+# pick, so there is no separate team colour to choose — and the first member's
+# colour is already on the screen, on their card and their brick.
+func _team_color(team: int) -> Color:
+	var crew: Array[int] = _team_members(team)
+	return _slot_color(crew[0]) if not crew.is_empty() else Color(0.8, 0.8, 0.85)
+
+# What the HUD and the toasts call a slot. -1 is the storm in co-op, which
+# casts hexes like a player but is not one.
+func slot_name(slot: int) -> String:
+	if slot < 0:
+		return "THE STORM"
+	return GameSettings.PLAYER_CONFIGS[slot]["name"]
+
+# Who is answerable for this turn, as the toast should say it: one player, or
+# in co-pilot the crew of two who flew it together.
+func _turn_name() -> String:
+	if crew_mate >= 0:
+		return "%s + %s" % [slot_name(active_slot), slot_name(crew_mate)]
+	return slot_name(active_slot)
+
+func _announce_fall(team: int) -> void:
+	var who: String = _turn_name()
+	var what: String = "BRICK" if fallen_this_turn == 1 else "%d BRICKS" % fallen_this_turn
+	if variant == GameSettings.TOWER_FFA:
+		if lives[team] <= 0:
+			hud.show_message("%s DROPPED %s — OUT!" % [who, what], Color(1.0, 0.42, 0.36))
+		else:
+			hud.show_message("%s DROPPED %s   −1 LIFE" % [who, what], Color(1.0, 0.66, 0.30))
+		return
+	var team_name: String = GameSettings.tower_team_name(team, variant)
+	if lives[team] <= 0:
+		hud.show_message("%s DROPPED %s — %s OUT!" % [who, what, team_name], Color(1.0, 0.42, 0.36))
+	elif _teams_here().size() > 1:
+		hud.show_message("%s DROPPED %s   %s −1" % [who, what, team_name], Color(1.0, 0.66, 0.30))
+	else:
+		hud.show_message("%s DROPPED %s   −1 LIFE" % [who, what], Color(1.0, 0.66, 0.30))
 
 # --- Input -----------------------------------------------------------------
 
@@ -1162,29 +1564,54 @@ func _dash(dir: int) -> void:
 	dash_dir = dir
 
 func _unhandled_input(event: InputEvent) -> void:
+	# A tower in the race is one of two on screen and both have to hear every
+	# key, so the host forwards them to handle_key() itself rather than
+	# relying on which SubViewport Godot happens to deliver an event to.
+	if host != null:
+		return
+	handle_key(event)
+
+func handle_key(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return
 	var key: int = event.keycode
 
 	if key == KEY_ESCAPE:
-		get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+		if host == null:
+			get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
 		return
 	if state == "gameover":
-		if key == KEY_ENTER:
+		if key == KEY_ENTER and host == null:
 			_start_match()
 		return
+
+	# Cast keys from everyone on this tower, not just whoever is flying: a
+	# teammate's self skill can be cast *for* the player on the clock (see
+	# _may_cast), which is the one thing a player can do on somebody else's
+	# turn. Every key here is unique across the four clusters, so reading all
+	# of them cannot shadow anything.
+	for s in members:
+		var c: Dictionary = GameSettings.PLAYER_CONFIGS[s]
+		if key == c["cast_self"]:
+			_cast(s, "self")
+			return
+		if key == c["cast_opponent"]:
+			_cast(s, "opponent")
+			return
 	if state != "piloting" or active_piece == null:
 		return
 
 	# Rotation reuses the two skill-choice buttons rather than the confirm
 	# key: they are the only bindings every player already has that aren't
 	# needed for moving or dropping, and they flank confirm on the keyboard
-	# so "left of drop / right of drop" turns left / right.
+	# so "left of drop / right of drop" turns left / right. In co-pilot they
+	# are read off the *other* member of the crew — see _turner_slot().
 	var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[active_slot]
-	if key == cfg["skill_self"]:
+	var turner: Dictionary = GameSettings.PLAYER_CONFIGS[_turner_slot()]
+	if key == turner["skill_self"]:
 		if not _effect_rotation_locked():
 			aim_steps += 1
-	elif key == cfg["skill_opponent"]:
+	elif key == turner["skill_opponent"]:
 		if not _effect_rotation_locked():
 			aim_steps -= 1
 	elif key == cfg["confirm"]:
@@ -1193,10 +1620,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		_press_direction(_effect_steer_dir(-1))
 	elif key == cfg["right"]:
 		_press_direction(_effect_steer_dir(1))
-	elif key == cfg["cast_self"]:
-		_cast(active_slot, "self")
-	elif key == cfg["cast_opponent"]:
-		_cast(active_slot, "opponent")
+
+# Whose rotate keys turn the brick: the pilot's own, except in co-pilot,
+# where the crew splits one brick between two people.
+func _turner_slot() -> int:
+	return crew_mate if crew_mate >= 0 else active_slot
 
 # --- Skills ----------------------------------------------------------------
 # The plumbing only. What a skill *does* is entirely inside its TowerSkill.
@@ -1221,7 +1649,7 @@ func _try_grant(slot: int) -> void:
 	var open: Array[String] = []
 	if held_self[slot] == "" and not TowerSkillCatalog.ids_in("self").is_empty():
 		open.append("self")
-	if held_opponent[slot] == "" and not TowerSkillCatalog.ids_in("opponent").is_empty():
+	if held_opponent[slot] == "" and _has_rivals() and not TowerSkillCatalog.ids_in("opponent").is_empty():
 		open.append("opponent")
 	if open.is_empty():
 		return
@@ -1234,52 +1662,102 @@ func _try_grant(slot: int) -> void:
 	var c: Color = _slot_color(slot)
 	hud.show_message("%s EARNED %s" % [who, TowerSkillCatalog.title_of(id)], Color(c.r, c.g, c.b, 1.0))
 
-# Only on the caster's own turn, with their brick in the air. A self skill
-# goes live now; an opponent skill is queued for its target's next turn (see
-# TowerSkill's header for why never sooner). Refused, and kept, when there is
-# no one to hex — the match is ending on that turn anyway.
+# Is there anyone a hex could ever land on? Not in co-op, where everyone on
+# the tower is on one side — the storm is the only one casting hexes there,
+# so a player is never handed one they could not use.
+func _has_rivals() -> bool:
+	return host != null or _teams_here().size() > 1
+
+# Who may cast what, right now. The player on the clock always may, and in
+# co-pilot so may the crew member turning the brick, since the turn is both
+# of theirs. A teammate may also cast a SELF skill on the flyer's behalf — a
+# support cast, the one thing anybody can do on somebody else's turn — but
+# never a hex: a hex is aimed at the next team up, and choosing when to send
+# it is the flyer's call. In free-for-all nobody has a teammate, so this
+# reduces to "only on your own turn", exactly as before.
+func _may_cast(slot: int, category: String) -> bool:
+	if not members.has(slot):
+		return false
+	if slot == active_slot or slot == crew_mate:
+		return true
+	return category == "self" and team_of[slot] == team_of[active_slot] and lives[team_of[slot]] > 0
+
+# Only during a piloting, with a brick in the air. A self skill goes live
+# now, on whoever is flying; an opponent skill is queued for its target's
+# next turn (see TowerSkill's header for why never sooner). Refused, and
+# kept, when there is no one to hex — the match is ending on that turn anyway.
 func _cast(slot: int, category: String) -> bool:
-	if state != "piloting" or slot != active_slot or active_piece == null:
+	if state != "piloting" or active_piece == null or not _may_cast(slot, category):
 		return false
 	var id: String = held_self[slot] if category == "self" else held_opponent[slot]
 	if id == "":
 		return false
-	var who: String = GameSettings.PLAYER_CONFIGS[slot]["name"]
+	var who: String = slot_name(slot)
 	var c: Color = _slot_color(slot)
 	var title: String = TowerSkillCatalog.title_of(id)
 	if category == "self":
-		var e: TowerSkill = TowerSkillCatalog.make(id, self, slot, slot)
+		# Attached to whoever is flying, whoever cast it: the hooks are all
+		# read off the player on the clock (see _live_for), so this is what
+		# makes a support cast land on the brick it was cast for.
+		var e: TowerSkill = TowerSkillCatalog.make(id, self, slot, active_slot)
 		if e == null:
 			return false
 		held_self[slot] = ""
 		_go_live(e)
-		hud.show_message("%s — %s" % [who, title], Color(c.r, c.g, c.b, 1.0))
+		if slot == active_slot:
+			hud.show_message("%s — %s" % [who, title], Color(c.r, c.g, c.b, 1.0))
+		else:
+			hud.show_message("%s → %s — %s" % [who, slot_name(active_slot), title], Color(c.r, c.g, c.b, 1.0))
 	else:
 		var probe: TowerSkill = TowerSkillCatalog.make(id, self, slot, slot)
 		if probe == null:
 			return false
+		# In the race the rivals are on the other tower, so the hex is handed
+		# across and queued there, on that tower's own clock.
 		var targets: Array[int] = []
-		if probe.affects_all_opponents():
-			for i in range(lives.size()):
-				if i != slot and lives[i] > 0:
-					targets.append(i)
+		if host != null:
+			targets = host.relay_hex(self, id, slot)
 		else:
-			var next: int = _next_living_slot(slot)
-			if next >= 0 and next != slot:
-				targets.append(next)
+			targets = _hex_targets(team_of[slot], probe.affects_all_opponents())
+			if not targets.is_empty():
+				_queue_hex(id, slot, targets)
 		if targets.is_empty():
 			return false
 		held_opponent[slot] = ""
-		for t in targets:
-			var e: TowerSkill = TowerSkillCatalog.make(id, self, slot, t)
-			e.turns_left = e.duration_turns()
-			queued_effects.append(e)
 		var names: Array[String] = []
 		for t in targets:
-			names.append(GameSettings.PLAYER_CONFIGS[t]["name"])
+			names.append(slot_name(t))
 		hud.show_message("%s → %s — %s" % [who, " + ".join(names), title], Color(c.r, c.g, c.b, 1.0))
 	_refresh_hud()
 	return true
+
+# Who a hex cast by `from_team` lands on. An ordinary one goes to the next
+# rival team in turn order, on whichever member flies its next brick; one
+# that `affects_all_opponents()` goes to every living rival player — except
+# in co-pilot, where a crew is one pair of hands and gets one copy. In
+# free-for-all a team is a player, so this is the next living player, or
+# every other living one, exactly as it always was.
+func _hex_targets(from_team: int, all: bool) -> Array[int]:
+	var out: Array[int] = []
+	if all:
+		for t in _teams_here():
+			if t == from_team or lives[t] <= 0:
+				continue
+			if variant == GameSettings.TOWER_COPILOT:
+				out.append(_pilot_of(t))
+			else:
+				out.append_array(_team_members(t))
+	else:
+		var t: int = _next_living_team(from_team)
+		if t >= 0 and t != from_team:
+			out.append(_pilot_of(t))
+	return out
+
+func _queue_hex(id: String, caster: int, targets: Array[int]) -> void:
+	for t in targets:
+		var e: TowerSkill = TowerSkillCatalog.make(id, self, caster, t)
+		e.turns_left = e.duration_turns()
+		queued_effects.append(e)
 
 # Listed BEFORE activate() runs, so anything activate() asks — a multiplier,
 # a redraw — is answered with this effect counted. Same contract as
@@ -1411,17 +1889,26 @@ func _effect_spawn_index(rolled: int) -> int:
 
 func _refresh_hud() -> void:
 	var slots: Array[Dictionary] = []
-	for i in range(lives.size()):
+	for i in range(GameSettings.player_count):
 		var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[i]
 		var tags: Array[String] = []
+		# The crew's roles lead the tags, so a co-pilot card says which pair
+		# of keys is live on it before it says what is being done to it.
+		if state == "piloting" and crew_mate >= 0:
+			if i == active_slot:
+				tags.append("STEER")
+			elif i == crew_mate:
+				tags.append("TURN")
 		for e in _live_for(i):
 			var tag: String = e.hud_tag()
 			if tag != "":
 				tags.append(tag)
+		var team: int = team_of[i] if i < team_of.size() else i
 		slots.append({
 			"name": cfg["name"],
 			"color": _slot_color(i),
-			"lives": lives[i],
+			"team": team,
+			"lives": lives[team] if team < lives.size() else 0,
 			"charge": charge[i] if i < charge.size() else 0,
 			"held_self": held_self[i] if i < held_self.size() else "",
 			"held_opponent": held_opponent[i] if i < held_opponent.size() else "",
@@ -1429,27 +1916,74 @@ func _refresh_hud() -> void:
 			"tags": tags,
 		})
 	hud.slots = slots
+	hud.groups = _hud_groups()
+	hud.subtitle = _hud_subtitle()
 	hud.charge_max = CHARGE_TO_SKILL
 	var hexes: Array[Dictionary] = []
 	for e in queued_effects:
 		hexes.append({
 			"title": TowerSkillCatalog.title_of(e.id),
-			"from": GameSettings.PLAYER_CONFIGS[e.caster]["name"],
-			"to": GameSettings.PLAYER_CONFIGS[e.target]["name"],
+			"from": slot_name(e.caster),
+			"to": slot_name(e.target),
 			"color": _slot_color(e.caster),
 		})
 	hud.hexes = hexes
-	hud.max_lives = START_LIVES
+	hud.hex_slot = _has_rivals()
+	hud.max_lives = _start_lives()
 	hud.active_slot = active_slot
+	hud.crew_mate = crew_mate
 	hud.waiting = (state != "piloting")
 	# Whose brick is next, so the banner can name them through the hand-off
 	# instead of captioning the wait. -1 (no one left) falls back to the
 	# current slot; the match is ending anyway on that frame.
-	var up: int = _next_living_slot(active_slot)
+	var up: int = _next_turn_slot()
 	hud.next_slot = up if up >= 0 else active_slot
+	hud.next_mate = _next_crew_mate()
 	hud.next_index = next_index
 	hud.controls = _controls_text()
 	hud.queue_redraw()
+
+# Free-for-all draws one card per player in seat order, exactly as before;
+# every other variant groups the cards under their team, with the team's one
+# shared row of lives on the group's header instead of on each card.
+func _hud_groups() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if variant == GameSettings.TOWER_FFA:
+		return out
+	for t in _teams_here():
+		out.append({
+			"team": t,
+			"title": GameSettings.tower_team_name(t, variant),
+			"color": _team_color(t),
+			"lives": lives[t],
+			"slots": _team_members(t),
+		})
+	return out
+
+func _hud_subtitle() -> String:
+	match variant:
+		GameSettings.TOWER_TEAMS:
+			return "two teams, %d lives a team" % TEAM_LIVES
+		GameSettings.TOWER_COPILOT:
+			return "one brick, two pairs of hands"
+		GameSettings.TOWER_COOP:
+			return "height %d / %d  ·  storm in %d" % [int(round(_height_cells())), int(goal_cells), storm_in]
+		GameSettings.TOWER_RACE:
+			return "race to %d  ·  height %d" % [int(goal_cells), int(round(_height_cells()))]
+	return "one tower, three lives each"
+
+# The navigator for the turn after this one, so the co-pilot banner can name
+# the whole crew through the hand-off. -1 outside co-pilot.
+func _next_crew_mate() -> int:
+	if variant != GameSettings.TOWER_COPILOT:
+		return -1
+	var t: int = _next_living_team(turn_team)
+	if t < 0:
+		return -1
+	var crew: Array[int] = _team_members(t)
+	if crew.size() < 2:
+		return -1
+	return crew[(team_cursor[t] + 1) % crew.size()]
 
 func _controls_text() -> String:
 	if state != "piloting":
@@ -1457,17 +1991,31 @@ func _controls_text() -> String:
 	# One action per line — TowerHUD splits on newlines because the side
 	# column is too narrow for the single-line form.
 	var cfg: Dictionary = GameSettings.PLAYER_CONFIGS[active_slot]
+	if crew_mate >= 0:
+		# Two people, two halves of the same list. Named, because a crew
+		# swaps halves every brick and the panel is how they find out who has
+		# which this time.
+		var mate: Dictionary = GameSettings.PLAYER_CONFIGS[crew_mate]
+		return "%s steers   %s\n%s + a direction   a block\n%s   fall faster\n%s turns   %s / %s\nskills   %s  ·  %s" % [
+			cfg["name"], cfg["steer_label"],
+			cfg["confirm_label"],
+			OS.get_keycode_string(cfg["down"]),
+			mate["name"], OS.get_keycode_string(mate["skill_opponent"]), OS.get_keycode_string(mate["skill_self"]),
+			cfg.get("cast_label", ""), mate.get("cast_label", ""),
+		]
 	# "a block" rather than "a whole block", and "a direction" rather than the
 	# steer label spelled out again: the column gives 196px at font 15, and
 	# P2's "Up + Left / Right   dash a whole block" measures 266. This form's
 	# widest player is 178.
-	return "%s   half a block\n%s + a direction   a block\n%s / %s   rotate\n%s   fall faster\n%s   skills" % [
+	return "%s   half a block\n%s + a direction   a block\n%s / %s   rotate\n%s   fall faster\n%s   %s" % [
 		cfg["steer_label"],
 		cfg["confirm_label"],
 		OS.get_keycode_string(cfg["skill_opponent"]),
 		OS.get_keycode_string(cfg["skill_self"]),
 		OS.get_keycode_string(cfg["down"]),
-		cfg.get("cast_label", ""),
+		# No rivals, no hex key worth listing (see TowerHUD.hex_slot).
+		cfg.get("cast_label", "") if _has_rivals() else OS.get_keycode_string(cfg["cast_self"]),
+		"skills" if _has_rivals() else "skill",
 	]
 
 # --- Foreground ------------------------------------------------------------
@@ -1480,6 +2028,7 @@ func _draw() -> void:
 
 	_draw_play_column(top, half_w)
 	_draw_height_guides(top, bottom, half_w)
+	_draw_goal_line(half_w)
 	_draw_outcrop(half_w)
 	_draw_drop_guide(half_w)
 	_draw_dash_ghost()
@@ -1511,6 +2060,28 @@ func _draw_height_guides(top: float, bottom: float, half_w: float) -> void:
 	for side: float in [-1.0, 1.0]:
 		var x: float = side * half_w
 		draw_line(Vector2(x, 0.0), Vector2(x, top), EDGE_LINE_COLOR, _px(2.0))
+
+# The finish line, across the whole play column. Gold dashes on a dark
+# underlay rather than gold alone: everything drawn over this backdrop has to
+# survive a bright sky (§7), and a light line on its own disappears into it.
+# Under the bricks, like every other guide — a brick that has crossed the
+# line covers it, which reads as having crossed it.
+func _draw_goal_line(half_w: float) -> void:
+	if goal_cells <= 0.0:
+		return
+	var y: float = -goal_cells * CELL
+	var reach: float = half_w + AIM_BOUND_CELLS * CELL
+	draw_line(Vector2(-reach, y), Vector2(reach, y), GOAL_SHADOW, _px(7.0))
+	var dash: float = CELL * 0.5
+	var x: float = -reach
+	while x < reach:
+		draw_line(Vector2(x, y), Vector2(minf(x + dash * 0.6, reach), y), GOAL_COLOR, _px(3.0))
+		x += dash
+	var font: Font = ThemeDB.fallback_font
+	var size: int = int(round(14.0 / cam_zoom))
+	var at := Vector2(-reach + _px(6.0), y - _px(8.0))
+	draw_rect(Rect2(at + Vector2(-_px(4.0), -_px(15.0)), Vector2(_px(44.0), _px(19.0))), GOAL_SHADOW, true)
+	draw_string(font, at, "GOAL", HORIZONTAL_ALIGNMENT_LEFT, -1, size, GOAL_COLOR)
 
 # The tower stands on a rock outcrop growing out of the ground, not on a
 # platform on legs. Same silhouette language as the cliffs in the backdrop: a

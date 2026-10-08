@@ -9,6 +9,79 @@ const MODE_RACE := 0  # Don't Crash — the split-screen dodge-traffic race
 const MODE_TOWER := 1 # Pile Up — the shared-tower physics stacker
 var mode: int = MODE_RACE
 
+# Which way Pile Up is played, picked on TowerVariantSelect after the main
+# menu. Plain ints for the same reason `mode` is one.
+#
+# Every variant is the same TowerMode underneath, and they differ in exactly
+# one idea: **who a turn belongs to**. In free-for-all that is one player, and
+# everything else is a generalisation of it — a team is a set of players who
+# share a life pool and take the team's turns in rotation, so free-for-all is
+# just every player on a team of one. That is why the original mode is still
+# the default and why its probes still mean what they did.
+const TOWER_FFA := 0     # every builder for themselves — the original Pile Up
+const TOWER_TEAMS := 1   # two teams on one tower, a shared life pool each
+const TOWER_COPILOT := 2 # two crews of two: one steers the brick, the other turns it
+const TOWER_COOP := 3    # everyone against the storm, building to a goal line
+const TOWER_RACE := 4    # two towers side by side, first team to the line
+var tower_variant: int = TOWER_FFA
+
+# The variant picker's rows, and the player counts each one is playable at.
+# `counts` is what PlayerSelect offers; a count missing here is not a quieter
+# version of the variant, it is a variant that does not exist at that count
+# (co-pilot needs two crews of two, and a team needs a second player).
+#
+# `group` puts a variant behind a category row on the picker instead of on
+# its top level ("" = top level). The three where one team plays against
+# another sit under TEAM MODES, asked for so the first screen reads as three
+# choices — alone, against each other in teams, together — rather than five.
+# Co-op is deliberately not in it: it is one team, and nobody plays against
+# anybody.
+const TOWER_VARIANTS: Array[Dictionary] = [
+	{"id": TOWER_FFA, "group": "", "title": "FREE FOR ALL", "hint": "one tower, three lives each — drop a brick and it costs you", "counts": [2, 3, 4]},
+	{"id": TOWER_TEAMS, "group": "teams", "title": "TEAMS", "hint": "one tower — a shared pool of lives per team, turns alternate sides", "counts": [3, 4]},
+	{"id": TOWER_COPILOT, "group": "teams", "title": "CO-PILOT", "hint": "two crews of two, one brick per crew — one of you steers it, the other turns it", "counts": [4]},
+	{"id": TOWER_COOP, "group": "", "title": "CO-OP: THE STORM", "hint": "everyone on one team — build to the goal line while the storm throws hexes", "counts": [1, 2, 3, 4]},
+	{"id": TOWER_RACE, "group": "teams", "title": "TEAM RACE", "hint": "a tower each, side by side — first to the line wins, and hexes cross over", "counts": [2, 3, 4]},
+]
+
+# The category rows a `group` refers to: what the top level shows for it, and
+# the title over its own page.
+const TOWER_GROUPS := {
+	"teams": {
+		"title": "TEAM MODES",
+		"hint": "left half of the keyboard vs the right — teams, co-pilot or a race",
+		"page_hint": "left team: P1 + P3      right team: P2 + P4",
+	},
+}
+
+func tower_variant_info(variant: int = tower_variant) -> Dictionary:
+	for v: Dictionary in TOWER_VARIANTS:
+		if v["id"] == variant:
+			return v
+	return TOWER_VARIANTS[0]
+
+# Teams are seats, not a choice. P1 (WASD) and P3 (TFGH) sit on the left
+# half of the keyboard and P2 (arrows) and P4 (IJKL) on the right, so the
+# halves are the teams — nobody has to reach across an opponent to play, and
+# the default turn order P1, P2, P3, P4 alternates the teams on its own.
+func tower_team_of(slot: int, variant: int = tower_variant) -> int:
+	match variant:
+		TOWER_FFA:
+			return slot
+		TOWER_COOP:
+			return 0
+	return slot % 2
+
+func tower_team_name(team: int, variant: int = tower_variant) -> String:
+	match variant:
+		TOWER_FFA:
+			return PLAYER_CONFIGS[team]["name"] if team < PLAYER_CONFIGS.size() else "?"
+		TOWER_COOP:
+			return "THE CREW"
+		TOWER_COPILOT:
+			return "LEFT CREW" if team == 0 else "RIGHT CREW"
+	return "LEFT TEAM" if team == 0 else "RIGHT TEAM"
+
 var player_count: int = 2
 
 # Which player slots start a round driven by BotDriver instead of a keyboard.

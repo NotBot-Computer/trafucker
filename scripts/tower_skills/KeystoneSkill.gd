@@ -93,7 +93,9 @@ func activate() -> void:
 	_outlines = []
 	_victim = _choose()
 	if _victim == null:
-		var who: String = GameSettings.PLAYER_CONFIGS[caster]["name"]
+		# slot_name(), not PLAYER_CONFIGS[caster]: in co-op the storm casts
+		# this as slot -1, which a negative index would quietly call "P4".
+		var who: String = mode.slot_name(caster)
 		var c: Color = mode._slot_color(caster)
 		mode.hud.show_message("%s — KEYSTONE: NOTHING TO PULL" % who, Color(c.r, c.g, c.b, 1.0))
 		_pulled = true # nothing to do this turn; the effect just runs out

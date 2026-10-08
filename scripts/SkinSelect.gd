@@ -97,9 +97,9 @@ func _refresh() -> void:
 				OS.get_keycode_string(GameSettings.BOT_TOGGLE_KEYS[i]),
 			]
 		elif ready_flags[i]:
-			ref["status_label"].text = "READY!"
+			ref["status_label"].text = _team_line(i) + "READY!"
 		else:
-			ref["status_label"].text = "%s to change, %s to lock in" % [cfg["steer_label"], cfg["confirm_label"]]
+			ref["status_label"].text = _team_line(i) + "%s to change, %s to lock in" % [cfg["steer_label"], cfg["confirm_label"]]
 			all_ready = false
 	if all_ready:
 		hint.text = "Starting..."
@@ -118,9 +118,27 @@ func _refresh() -> void:
 		GameSettings.skins = chosen
 		GameSettings.skin_colors = chosen_colors
 		await get_tree().create_timer(0.4).timeout
-		get_tree().change_scene_to_file(
-			"res://scenes/Main.tscn" if race else "res://scenes/TowerMode.tscn"
-		)
+		get_tree().change_scene_to_file(_next_scene())
+
+func _next_scene() -> String:
+	if race:
+		return "res://scenes/Main.tscn"
+	# The tower race is two TowerModes side by side under a host of its own;
+	# every other variant is one TowerMode that reads the variant itself.
+	if GameSettings.tower_variant == GameSettings.TOWER_RACE:
+		return "res://scenes/TowerRace.tscn"
+	return "res://scenes/TowerMode.tscn"
+
+# Which team this seat is on, for the Pile Up variants that have teams. Teams
+# are seats rather than a choice (GameSettings.tower_team_of), so this screen
+# only has to say so — the colour is still yours to pick.
+func _team_line(slot: int) -> String:
+	if race:
+		return ""
+	var v: int = GameSettings.tower_variant
+	if v == GameSettings.TOWER_FFA or v == GameSettings.TOWER_COOP:
+		return ""
+	return GameSettings.tower_team_name(GameSettings.tower_team_of(slot)) + "\n"
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:

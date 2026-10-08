@@ -195,7 +195,9 @@ func activate() -> void:
 	_impact_t = -1.0
 	_choose()
 	var who: String = GameSettings.PLAYER_CONFIGS[target]["name"]
-	var from: String = GameSettings.PLAYER_CONFIGS[caster]["name"]
+	# slot_name(), not PLAYER_CONFIGS[caster]: in co-op the storm casts this
+	# as slot -1, which a negative index would quietly call "P4".
+	var from: String = mode.slot_name(caster)
 	var c: Color = mode._slot_color(caster)
 	mode.hud.show_message("%s — RUBBLE INCOMING FROM %s" % [who, from], Color(c.r, c.g, c.b, 1.0))
 
