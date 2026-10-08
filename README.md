@@ -48,15 +48,16 @@ You can walk a brick up to two blocks past the platform edge if you want to — 
 
 ### Pile Up's variants
 
-Picked on the screen after **PILE UP**, which offers **FREE FOR ALL**, **TEAM MODES ›** and **CO-OP: THE STORM** — the three team-against-team variants (Teams, Co-Pilot, Team Race) are behind **TEAM MODES**. Teams are seats, not a choice: **P1 + P3 are the left team** (both on the left half of the keyboard) and **P2 + P4 the right**, so nobody reaches across a rival and the turn order alternates sides on its own. A team shares one row of lives, shown once on its header above its members' cards.
+Picked on the screen after **PILE UP**, which offers **FREE FOR ALL**, **RACE**, **TEAM MODES ›** and **CO-OP: THE STORM** — the three team-against-team variants (Teams, Co-Pilot, Team Race) are behind **TEAM MODES**. Teams are seats, not a choice: **P1 + P3 are the left team** (both on the left half of the keyboard) and **P2 + P4 the right**, so nobody reaches across a rival and the turn order alternates sides on its own. A team shares one row of lives, shown once on its header above its members' cards.
 
 | Variant | Players | How it plays |
 |---|---|---|
 | **FREE FOR ALL** | 2-4 | The original: three lives each, last builder standing. |
+| **RACE** | 2-4 | Every player gets their own tower, side by side, and everyone builds **at the same time** with the same bricks in the same order. First to settle a tower over the **line 10 blocks up** wins; run out of your **5 lives** and you drop out while the rest race on. A hex you cast lands on **whoever is highest** (ties go to the next seat). With three or four towers each one is narrow, so its HUD becomes one strip across the top. |
 | **TEAMS** | 3-4 | One tower, two teams, **6 lives per team**. Turns alternate left, right, left, right, and each side's members take its turns in rotation (with three players, P2 holds the right alone and goes every other turn). A drop costs your *team* a life. You can cast your **self** skill on your teammate's turn to help them — it lands on their brick — but only the player flying can send a hex, and it always goes to the next rival up. |
 | **CO-PILOT** | 4 | Two crews of two, **one brick per crew**: one of you steers it (left/right, dash, fall faster) and the other turns it (rotate keys) — your own keys for your own half, nothing else works. You swap halves every brick, and the cards say who has which (STEER / TURN). Either of you can cast; a clean drop charges you both. |
 | **CO-OP: THE STORM** | 1-4 | Everyone on one crew, **5 lives**, building to the **GOAL line 14 blocks up**. Every 3 turns the storm sends a random hex at whoever is up next (every 2 once you're past halfway). Only self skills drop in co-op — there's no one to hex. Settle the tower over the line to win. |
-| **TEAM RACE** | 2-4 | A tower each, side by side, building **at the same time**. Same bricks, same order, both sides. First team to settle its tower over the **line 10 blocks up** wins; run out of your **5 lives** first and you lose. A hex you cast lands on the *other* tower's next brick. The strip between the towers shows both teams' progress. |
+| **TEAM RACE** | 2-4 | A tower each, side by side, building **at the same time**. Same bricks, same order, both sides. First team to settle its tower over the **line 10 blocks up** wins; run out of your **5 lives** first and you lose. A hex you cast lands on the *other* tower's next brick. A bar along the bottom of each tower shows its progress to the line. |
 
 Skills are earned by building. Every **clean placement** — your brick landed and nothing fell — fills one segment of the charge bar along the top of your card; two of them hand you a random skill into whichever of your two slots is empty. The green slot is a **self** skill and the red one is a **hex**, each on its own key (shown under the slot), and both can only be cast **while your own brick is in the air**. A self skill goes off on the spot. A hex waits for its target's next turn and lands the moment their brick appears — the tower is shared and a turn's falls are charged to whoever is on the clock, so a hex that hit during *your* turn would only ever hurt you. Hexes in flight are listed under the turn banner, so the player about to receive one sees it coming.
 
@@ -161,7 +162,7 @@ scenes/
   Car.tscn             sprite/placeholder + collision, reused for player and traffic
   LaneDivider.tscn     grass + trees median between adjacent player boards
   TowerMode.tscn       Pile Up: the shared tower, its platform and its HUD
-  TowerRace.tscn       Pile Up's team race: two TowerModes side by side in SubViewports
+  TowerRace.tscn       Pile Up's races: a TowerMode per team (or per player) side by side in SubViewports
   TowerPiece.tscn      one car-tetromino brick (a real RigidBody2D)
 scripts/
   GameSettings.gd      autoload: player count, chosen skins, sprite tables, key bindings
@@ -178,7 +179,7 @@ scripts/
   TowerMode.gd          Pile Up: turn order, drop/settle/resolve loop, lives, camera
                         — and the variants: teams, crews, goal lines, the storm
   TowerVariantSelect.gd the variant picker, built from GameSettings.TOWER_VARIANTS
-  TowerRace.gd          hosts the race's two towers, relays hexes, owns its result screen
+  TowerRace.gd          hosts a race's towers, relays hexes (to the leader), owns its result screen
   TowerPiece.gd         one brick: collision from cell rects, physics material, fall cap
   TowerMode.gd          (see above) also owns the shape-query movement model
   TowerHUD.gd           Pile Up's side-column panels — lives, next brick, controls
