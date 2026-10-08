@@ -71,6 +71,11 @@ And one for Pile Up's **variants** (`GameSettings.TOWER_*` — teams, co-pilot, 
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/TeamProbe.tscn
 ```
 
+And one for Pile Up's **cups** (`GameSettings.tower_cup`, `scripts/TowerCup.gd`; docs/PROJECT_STATE.md §5 session AG). It plays whole cups — the solo cup at 2, 3 and 4 players and the team cup at 3 and 4 — round after round with blind aim until somebody wins, and checks every round paid out exactly once, to every competitor, in the order the probe *watched* the round happen (the last one eliminated 2nd; in a race, still-building by height, then drop-outs last-out-highest), that every trophy a round hands out is a car of that round's winner, plus the tally screen's split of each total into before and this round's award. It never changes scene — it cancels a finished round's own timer to the tally — so the scene-to-scene hand-off and the Enter key are not in it:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/CupProbe.tscn
+```
+
 Adding or replacing art means running Godot's importer first — a `preload()` of an unimported PNG is a parse error, so every check above fails misleadingly until this has run:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --import
