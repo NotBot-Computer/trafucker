@@ -462,6 +462,16 @@ const COLUMN_SHADE := Color(0.06, 0.08, 0.20, 0.10)
 # tower. Unplayed, and the first number to move.
 const CHARGE_TO_SKILL := 2
 
+# --- Cups --------------------------------------------------------------------
+# In a cup (GameSettings.tower_cup) a match is one round of several: its
+# result pays out trophies by place and the next round is a different
+# variant, on the tally screen in between (TowerCup). So the end of a match
+# goes there rather than to a replay — on Enter, or on its own after
+# CUP_RESULT_HOLD, long enough to read who won the round over the tower they
+# built and short enough that nobody has to reach for the keyboard.
+const CUP_RESULT_HOLD := 3.0
+const CUP_SCENE := "res://scenes/TowerCup.tscn"
+
 @onready var camera: Camera2D = $Camera2D
 @onready var platform: StaticBody2D = $Platform
 @onready var platform_shape: CollisionShape2D = $Platform/CollisionShape2D
@@ -472,6 +482,7 @@ const CHARGE_TO_SKILL := 2
 @onready var overlay: Control = $HUD/Overlay
 @onready var overlay_title: Label = $HUD/Overlay/OverlayTitle
 @onready var overlay_body: Label = $HUD/Overlay/OverlayBody
+@onready var overlay_hint: Label = $HUD/Overlay/OverlayHint
 @onready var countdown: Countdown = $HUD/Countdown
 @onready var skill_overlay: TowerSkillOverlay = $Foreground/SkillOverlay
 @onready var skill_screen: TowerSkillScreen = $HUD/SkillScreen
@@ -507,6 +518,12 @@ var team_cursor: Array[int] = [] # per team: how many turns it has taken, i.e. w
 var turn_team: int = -1 # the team on the clock (or the last one to be)
 var crew_mate: int = -1 # co-pilot only: the player turning the brick; -1 everywhere else
 var winner_team: int = -1 # set when a goal line decides the match rather than a last survivor
+# Teams in the order they ran out of lives, first out first. Nothing in a
+# match reads it; it is what ranks the losers when a cup asks for 1st to 4th
+# rather than just a winner (placements()).
+var out_order: Array[int] = []
+var _cup_leave_in: float = 0.0 # cup only: counts down to the tally once the round is over
+var _cup_round_shown: int = 0 # cup only: this round's number, fixed before the result is recorded
 var turns_flown: Array[int] = [] # per slot, for the end screen
 var bricks_dropped: Array[int] = [] # per slot, for the end screen
 # The race deals both towers the same bricks in the same order, so it is a
@@ -633,6 +650,9 @@ func _start_match() -> void:
 	turn_team = team_count - 1 # so the first _begin_turn() advances onto team 0
 	crew_mate = -1
 	winner_team = -1
+	out_order = []
+	_cup_leave_in = 0.0
+	_cup_round_shown = GameSettings.cup_round + 1
 	goal_cells = _goal_for_variant()
 	storm_in = STORM_EVERY
 	storms = 0
@@ -785,6 +805,8 @@ func _resolve_turn() -> void:
 		# row. The HUD swells it out of its slot rather than blanking it.
 		hud.spend_life(team, lives[team])
 		_announce_fall(team)
+		if lives[team] <= 0:
+			out_order.append(team)
 
 	# A clean placement is the charge. Deliberately not "any placement": a
 	# skill has to be earned by building, or the player who is knocking the
@@ -867,8 +889,40 @@ func _end_match() -> void:
 	else:
 		overlay_title.text = _result_title(winner)
 		overlay_body.text = _result_body()
+	if GameSettings.tower_cup != GameSettings.TOWER_CUP_NONE:
+		GameSettings.cup_record(placements())
+		overlay_hint.text = "ENTER for the trophies      ESC for the menu"
+		_cup_leave_in = CUP_RESULT_HOLD
 	overlay.visible = true
 	_refresh_hud()
+
+# This match's teams from 1st to last — what a cup pays out on. Whoever is
+# still standing first (the winner, then by lives left, which only matters
+# once a goal line can end a match with more than one team alive), then the
+# eliminated in reverse: the last one out came 2nd. Within a match only one
+# team can lose a life per turn, so nobody is ever eliminated level with
+# anybody else and the order is never a coin toss.
+func placements() -> Array[int]:
+	var order: Array[int] = []
+	for t in _teams_here():
+		if lives[t] > 0:
+			order.append(t)
+	order.sort_custom(func(a: int, b: int) -> bool:
+		return lives[a] > lives[b] or (lives[a] == lives[b] and a < b))
+	if winner_team >= 0 and order.has(winner_team):
+		order.erase(winner_team)
+		order.push_front(winner_team)
+	for i in range(out_order.size() - 1, -1, -1):
+		if not order.has(out_order[i]):
+			order.append(out_order[i])
+	for t in _teams_here():
+		if not order.has(t):
+			order.append(t)
+	return order
+
+func _leave_for_cup() -> void:
+	_cup_leave_in = 0.0
+	get_tree().change_scene_to_file(CUP_SCENE)
 
 var _halting := false
 
@@ -981,6 +1035,10 @@ func _process(delta: float) -> void:
 	camera.position = Vector2(0.0, cam_y)
 	backdrop.set_scroll(maxf(0.0, (cam_start_y - cam_y) * BACKDROP_PARALLAX))
 	hud.tick(delta)
+	if _cup_leave_in > 0.0:
+		_cup_leave_in -= delta
+		if _cup_leave_in <= 0.0:
+			_leave_for_cup()
 	queue_redraw()
 	# Every frame, live effects or not: a CanvasItem keeps its last draw list
 	# until asked again, so the frame after the last effect leaves needs a
@@ -1592,7 +1650,10 @@ func handle_key(event: InputEvent) -> void:
 		return
 	if state == "gameover":
 		if key == KEY_ENTER and host == null:
-			_start_match()
+			if GameSettings.tower_cup != GameSettings.TOWER_CUP_NONE:
+				_leave_for_cup()
+			else:
+				_start_match()
 		return
 
 	# Cast keys from everyone on this tower, not just whoever is flying: a
@@ -1928,6 +1989,7 @@ func _refresh_hud() -> void:
 	hud.slots = slots
 	hud.groups = _hud_groups()
 	hud.subtitle = _hud_subtitle()
+	hud.heading = _hud_heading()
 	hud.charge_max = CHARGE_TO_SKILL
 	var hexes: Array[Dictionary] = []
 	for e in queued_effects:
@@ -1973,6 +2035,13 @@ func _hud_groups() -> Array[Dictionary]:
 			"plain": variant == GameSettings.TOWER_RACE_SOLO,
 		})
 	return out
+
+# In a cup the HUD's title says which round this is, since the variant is
+# no longer something the players picked and the tally is a screen away.
+func _hud_heading() -> String:
+	if GameSettings.tower_cup == GameSettings.TOWER_CUP_NONE:
+		return "PILE UP"
+	return "%s · ROUND %d" % [GameSettings.tower_cup_info()["title"], _cup_round_shown]
 
 func _hud_subtitle() -> String:
 	match variant:

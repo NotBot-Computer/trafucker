@@ -69,6 +69,177 @@ func tower_variant_info(variant: int = tower_variant) -> Dictionary:
 			return v
 	return TOWER_VARIANTS[0]
 
+# Which scene plays a variant: a race is several TowerModes under a host of
+# its own, every other variant is one TowerMode that reads the variant itself.
+func tower_scene(variant: int = tower_variant) -> String:
+	if tower_is_race(variant):
+		return "res://scenes/TowerRace.tscn"
+	return "res://scenes/TowerMode.tscn"
+
+# --- Pile Up's cups ----------------------------------------------------------
+# A cup is a run of rounds, each one a *different* variant in turn — the
+# solo cup alternates free-for-all (last builder standing) and the race, the
+# team cup goes teams, team race, co-pilot — scored by where you finished:
+# 3 trophies for 1st, 2 for 2nd, 1 for 3rd, none for 4th. First to
+# CUP_TARGET wins the cup. TowerCup is the tally screen between rounds.
+#
+# A trophy is drawn as a car, and the car is the round's *winner's*, not the
+# row owner's: when blue wins a round, blue takes three blue cars, 2nd takes
+# two blue cars and 3rd one; when purple wins the next, that round's trophies
+# are all purple. So a row is its own history, read left to right — whose
+# rounds you were placing in, as well as how well — and the winner of every
+# round is on every row that scored in it. Asked for exactly like that.
+#
+# It lives here because it is the one thing in Pile Up that outlives a scene:
+# every round is a fresh TowerMode or TowerRace, and this autoload is what is
+# still there when the next one loads. Plain data only, same rule as above.
+#
+# A *competitor* is whoever a round is decided between, and it is always a
+# team index of the round's variant: in the solo cup that is the player's
+# own slot (tower_team_of() is the slot in free-for-all and the solo race),
+# and in the team cup it is the side — slot parity — which is the same pair of
+# teams in all three team variants. So a round's result is just its teams
+# from best to worst, and nothing here has to know which variant produced it.
+const TOWER_CUP_NONE := 0
+const TOWER_CUP_SOLO := 1
+const TOWER_CUP_TEAM := 2
+var tower_cup: int = TOWER_CUP_NONE
+
+const CUP_TARGET := 15
+# Trophies by place, 1st first — exactly as asked. Note what that means with
+# only two competitors (a two-player cup, or the team cup): the loser still
+# banks 2 a round, so the gap only ever opens by 1 and the cup is in effect
+# decided over a fixed five or six rounds. Unplayed; this is the line to change.
+const CUP_AWARDS: Array[int] = [3, 2, 1, 0]
+
+# The picker rows for the cups, in TOWER_VARIANTS' format plus `rounds`: the
+# variants the cup cycles through, in order. A round whose variant cannot be
+# played at this player count is skipped (co-pilot needs four), never played
+# short-handed.
+const TOWER_CUPS: Array[Dictionary] = [
+	{"id": TOWER_CUP_SOLO, "group": "", "title": "CUP", "hint": "a new mode every round — 3 trophies for 1st, 2 for 2nd, 1 for 3rd, first to 15", "counts": [2, 3, 4], "rounds": [TOWER_FFA, TOWER_RACE_SOLO]},
+	{"id": TOWER_CUP_TEAM, "group": "teams", "title": "TEAM CUP", "hint": "teams, team race and co-pilot in turn — first team to 15 trophies", "counts": [3, 4], "rounds": [TOWER_TEAMS, TOWER_RACE, TOWER_COPILOT]},
+]
+
+var cup_scores: Array[int] = [] # per competitor
+var cup_round: int = 0 # rounds finished so far
+var cup_last_order: Array[int] = [] # the last round's competitors, best to worst
+var cup_last_awards: Array[int] = [] # what each competitor got for it
+# Per competitor, one entry per trophy in the order they were won: the player
+# slot whose car that trophy is drawn as — a member of whoever won its round.
+# Untyped outer Array because GDScript has no nested typed arrays.
+var cup_trophy_cars: Array = []
+
+func tower_cup_info(cup: int = tower_cup) -> Dictionary:
+	for c: Dictionary in TOWER_CUPS:
+		if c["id"] == cup:
+			return c
+	return TOWER_CUPS[0]
+
+# What the picker and the player count describe: the cup, while one is
+# picked, otherwise the variant.
+func tower_pick_info() -> Dictionary:
+	return tower_cup_info() if tower_cup != TOWER_CUP_NONE else tower_variant_info()
+
+func cup_rounds() -> Array[int]:
+	var out: Array[int] = []
+	for v: int in tower_cup_info()["rounds"]:
+		if tower_variant_info(v)["counts"].has(player_count):
+			out.append(v)
+	return out
+
+# The variant round `index` (0-based) is played as.
+func cup_variant(index: int) -> int:
+	var rounds: Array[int] = cup_rounds()
+	return rounds[index % rounds.size()] if not rounds.is_empty() else TOWER_FFA
+
+func cup_competitors() -> int:
+	if tower_cup == TOWER_CUP_TEAM:
+		return 2
+	return player_count
+
+# The slots a competitor is made of, in seat order.
+func cup_members(competitor: int) -> Array[int]:
+	var out: Array[int] = []
+	for s in range(player_count):
+		if (s % 2 if tower_cup == TOWER_CUP_TEAM else s) == competitor:
+			out.append(s)
+	return out
+
+func cup_name(competitor: int) -> String:
+	if tower_cup == TOWER_CUP_TEAM:
+		return tower_team_name(competitor, TOWER_TEAMS)
+	return PLAYER_CONFIGS[competitor]["name"] if competitor < PLAYER_CONFIGS.size() else "?"
+
+func cup_award(place: int) -> int:
+	return CUP_AWARDS[place] if place >= 0 and place < CUP_AWARDS.size() else 0
+
+# A fresh cup for the players and colours already chosen.
+func cup_reset() -> void:
+	cup_scores = []
+	for _c in range(cup_competitors()):
+		cup_scores.append(0)
+	cup_round = 0
+	cup_last_order = []
+	cup_last_awards = []
+	cup_trophy_cars = []
+	for _c in range(cup_competitors()):
+		var cars: Array[int] = []
+		cup_trophy_cars.append(cars)
+	tower_variant = cup_variant(0)
+
+# One round's result, best to worst. Anyone missing from `order` is put last
+# in seat order rather than dropped, so a round always pays out every place.
+func cup_record(order: Array[int]) -> void:
+	var full: Array[int] = []
+	for c in order:
+		if c >= 0 and c < cup_scores.size() and not full.has(c):
+			full.append(c)
+	for c in range(cup_scores.size()):
+		if not full.has(c):
+			full.append(c)
+	cup_last_order = full
+	cup_last_awards = []
+	for _c in range(cup_scores.size()):
+		cup_last_awards.append(0)
+	# Every trophy this round is the winner's car. A winning team's cars take
+	# turns between its members, the same way on every row, so the pair is
+	# on everyone's row rather than only its first member.
+	var winners: Array[int] = cup_members(full[0])
+	if winners.is_empty():
+		winners = [0]
+	while cup_trophy_cars.size() < cup_scores.size():
+		var cars: Array[int] = []
+		cup_trophy_cars.append(cars)
+	for place in range(full.size()):
+		var got: int = cup_award(place)
+		cup_last_awards[full[place]] = got
+		cup_scores[full[place]] += got
+		for k in range(got):
+			cup_trophy_cars[full[place]].append(winners[k % winners.size()])
+	cup_round += 1
+
+# The player slot whose car competitor `c`'s trophy number `k` (0-based) is
+# drawn as; -1 if the cup has no record of it (a total set by hand).
+func cup_trophy_car(c: int, k: int) -> int:
+	if c < 0 or c >= cup_trophy_cars.size():
+		return -1
+	var cars: Array = cup_trophy_cars[c]
+	return int(cars[k]) if k >= 0 and k < cars.size() else -1
+
+# Whoever has won the cup, or -1. Two can cross the line in the same round;
+# the higher total takes it, and a dead heat goes to whoever placed better in
+# that round — the one that got them there.
+func cup_champion() -> int:
+	var best := -1
+	for c in range(cup_scores.size()):
+		if cup_scores[c] < CUP_TARGET:
+			continue
+		if best == -1 or cup_scores[c] > cup_scores[best] \
+				or (cup_scores[c] == cup_scores[best] and cup_last_order.find(c) < cup_last_order.find(best)):
+			best = c
+	return best
+
 # Teams are seats, not a choice. P1 (WASD) and P3 (TFGH) sit on the left
 # half of the keyboard and P2 (arrows) and P4 (IJKL) on the right, so the
 # halves are the teams — nobody has to reach across an opponent to play, and

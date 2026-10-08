@@ -125,6 +125,7 @@ var slots: Array[Dictionary] = [] # {name, color, team, lives, ...}, indexed by 
 # drawn as a header carrying the team's lives over its members' cards.
 var groups: Array[Dictionary] = []
 var subtitle: String = "one tower, three lives each"
+var heading: String = "PILE UP" # the column's title; a cup round names itself here
 var max_lives: int = 3
 var active_slot: int = 0
 var crew_mate: int = -1 # co-pilot: the other half of the crew on the clock
@@ -215,7 +216,12 @@ func _draw() -> void:
 	var right_x: float = size.x - COL_MARGIN - COL_W
 
 	draw_rect(Rect2(COL_MARGIN - 10.0, 16.0, COL_W + 20.0, 62.0), PANEL_BG, true)
-	draw_string(font, Vector2(COL_MARGIN, 44.0), "PILE UP", HORIZONTAL_ALIGNMENT_LEFT, COL_W, 26, Color(1, 1, 1, 0.95))
+	# Shrunk to fit like the toast: "TEAM CUP · ROUND 4" is wider than the
+	# column at the size "PILE UP" is drawn at.
+	var head_size: int = 26
+	while head_size > 14 and font.get_string_size(heading, HORIZONTAL_ALIGNMENT_LEFT, -1, head_size).x > COL_W:
+		head_size -= 2
+	draw_string(font, Vector2(COL_MARGIN, 44.0), heading, HORIZONTAL_ALIGNMENT_LEFT, COL_W, head_size, Color(1, 1, 1, 0.95))
 	draw_string(font, Vector2(COL_MARGIN, 66.0), subtitle, HORIZONTAL_ALIGNMENT_LEFT, COL_W, 13, LABEL_TEXT)
 
 	var bottom: float = _draw_column(font)

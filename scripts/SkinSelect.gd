@@ -123,11 +123,12 @@ func _refresh() -> void:
 func _next_scene() -> String:
 	if race:
 		return "res://scenes/Main.tscn"
-	# A race is several TowerModes side by side under a host of its own;
-	# every other variant is one TowerMode that reads the variant itself.
-	if GameSettings.tower_is_race():
-		return "res://scenes/TowerRace.tscn"
-	return "res://scenes/TowerMode.tscn"
+	# A cup opens on its standings — every count at zero and the first
+	# round's mode named — and that screen starts round one.
+	if GameSettings.tower_cup != GameSettings.TOWER_CUP_NONE:
+		GameSettings.cup_reset()
+		return "res://scenes/TowerCup.tscn"
+	return GameSettings.tower_scene()
 
 # Which team this seat is on, for the Pile Up variants that have teams. Teams
 # are seats rather than a choice (GameSettings.tower_team_of), so this screen

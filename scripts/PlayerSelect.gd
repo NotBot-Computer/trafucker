@@ -24,7 +24,7 @@ func _ready() -> void:
 		$Players1Button.grab_focus()
 		return
 
-	var info: Dictionary = GameSettings.tower_variant_info()
+	var info: Dictionary = GameSettings.tower_pick_info()
 	var counts: Array = info["counts"]
 	var buttons: Array[Button] = [$Players1Button, $Players2Button, $Players3Button, $Players4Button]
 	$Players1Button.text = "1 BUILDER"
@@ -32,7 +32,7 @@ func _ready() -> void:
 		buttons[i].visible = counts.has(i + 1)
 	$Title.text = "%s — HOW MANY BUILDERS?" % info["title"]
 	$Hint.visible = true
-	$Hint.text = _seating_hint(GameSettings.tower_variant)
+	$Hint.text = _cup_hint() if GameSettings.tower_cup != GameSettings.TOWER_CUP_NONE else _seating_hint(GameSettings.tower_variant)
 	for b in buttons:
 		if b.visible:
 			b.grab_focus()
@@ -56,6 +56,14 @@ func _seating_hint(variant: int) -> String:
 		GameSettings.TOWER_RACE_SOLO:
 			return "A tower each, side by side, in seat order — and a hex always lands on whoever is highest"
 	return "Every builder for themselves"
+
+# A cup is several variants, so the line says what it is made of instead of
+# how one of them is seated — and, in the team cup, the seats, which do not
+# change between its rounds.
+func _cup_hint() -> String:
+	if GameSettings.tower_cup == GameSettings.TOWER_CUP_TEAM:
+		return "Left team: P1 + P3      Right team: P2 + P4 — co-pilot rounds only with four"
+	return "Free for all, then a race, and round again — 1st 3 trophies, 2nd 2, 3rd 1, first to %d" % GameSettings.CUP_TARGET
 
 # `solo` is the race's single-player entry point: that mode is a race between
 # boards, so there has to be something to race — it is really "two boards, one

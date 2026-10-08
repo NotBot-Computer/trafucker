@@ -75,6 +75,7 @@ const OUT_TEXT := Color(1.0, 0.45, 0.42, 0.95)
 @onready var overlay: Control = $Layer/Overlay
 @onready var overlay_title: Label = $Layer/Overlay/OverlayTitle
 @onready var overlay_body: Label = $Layer/Overlay/OverlayBody
+@onready var overlay_hint: Label = $Layer/Overlay/OverlayHint
 
 var variant: int = GameSettings.TOWER_RACE
 var towers: Array = [] # left to right; untyped, TowerMode has no class_name
@@ -82,6 +83,11 @@ var dropped_out: Array[bool] = [] # per tower: ran out of lives, race goes on wi
 var viewports: Array[SubViewport] = []
 var view_w: float = 0.0
 var over := false
+var winner: int = -1 # the tower that won the race just decided; -1 for nobody
+# Towers in the order they dropped out, first out first — what ranks the
+# rest of the field when a cup asks for every place, not just the winner.
+var out_order: Array[int] = []
+var _cup_leave_in: float = 0.0 # cup only: see TowerMode.CUP_RESULT_HOLD
 
 func _ready() -> void:
 	frame.draw.connect(_draw_frame)
@@ -145,8 +151,12 @@ func _on_window_resized() -> void:
 	for vp in viewports:
 		vp.size = _pixel_size(Vector2(vp.size_2d_override))
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	frame.queue_redraw()
+	if _cup_leave_in > 0.0:
+		_cup_leave_in -= delta
+		if _cup_leave_in <= 0.0:
+			_leave_for_cup()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
@@ -156,7 +166,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if over:
 		if event.keycode == KEY_ENTER:
-			_restart()
+			if GameSettings.tower_cup != GameSettings.TOWER_CUP_NONE:
+				_leave_for_cup()
+			else:
+				_restart()
 		return
 	# Every tower hears every key; each only acts on its own builders' keys.
 	for t in towers:
@@ -164,6 +177,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _restart() -> void:
 	over = false
+	winner = -1
+	out_order = []
 	overlay.visible = false
 	var deal: int = _new_deal()
 	for i in range(towers.size()):
@@ -227,6 +242,7 @@ func tower_finished(tower) -> void:
 		_declare(i, "%s reached the line first" % _name_of(i))
 		return
 	dropped_out[i] = true
+	out_order.append(i)
 	tower.halt()
 	var left: Array[int] = []
 	for j in range(towers.size()):
@@ -238,16 +254,52 @@ func tower_finished(tower) -> void:
 	elif left.is_empty():
 		_declare(-1, "everybody ran out of lives")
 
-func _declare(winner: int, why: String) -> void:
+func _declare(won: int, why: String) -> void:
 	over = true
+	winner = won
 	for t in towers:
 		t.halt()
-	overlay_title.text = "NOBODY WINS" if winner < 0 else "%s WINS" % _name_of(winner)
+	overlay_title.text = "NOBODY WINS" if won < 0 else "%s WINS" % _name_of(won)
 	var lines: Array[String] = [why, ""]
 	for t in towers:
 		lines.append(t.team_summary())
 	overlay_body.text = "\n".join(lines)
+	if GameSettings.tower_cup != GameSettings.TOWER_CUP_NONE:
+		GameSettings.cup_record(placements())
+		overlay_hint.text = "ENTER for the trophies      ESC for the menu"
+		_cup_leave_in = towers[0].CUP_RESULT_HOLD if not towers.is_empty() else 3.0
 	overlay.visible = true
+
+# The towers from 1st to last, for a cup — tower i is team i, which in the
+# solo race is player i. The winner first; then whoever was still building
+# when the line was crossed, tallest first (lives left breaks a tie, then
+# seat order), since being in the race at the end beats having left it; then
+# the drop-outs, the last one out highest.
+func placements() -> Array[int]:
+	var order: Array[int] = []
+	if winner >= 0:
+		order.append(winner)
+	var racing: Array[int] = []
+	for j in range(towers.size()):
+		if j != winner and not dropped_out[j]:
+			racing.append(j)
+	racing.sort_custom(func(a: int, b: int) -> bool:
+		var ha: float = towers[a]._height_cells()
+		var hb: float = towers[b]._height_cells()
+		if absf(ha - hb) > 0.01:
+			return ha > hb
+		var la: int = towers[a].lives[a]
+		var lb: int = towers[b].lives[b]
+		return la > lb or (la == lb and a < b))
+	order.append_array(racing)
+	for k in range(out_order.size() - 1, -1, -1):
+		if not order.has(out_order[k]):
+			order.append(out_order[k])
+	return order
+
+func _leave_for_cup() -> void:
+	_cup_leave_in = 0.0
+	get_tree().change_scene_to_file(towers[0].CUP_SCENE if not towers.is_empty() else "res://scenes/TowerCup.tscn")
 
 func _name_of(i: int) -> String:
 	return GameSettings.tower_team_name(i, variant)
