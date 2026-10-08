@@ -66,6 +66,11 @@ And one for Pile Up's **skills** (`scripts/tower_skills/`), the counterpart of `
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/TowerSkillProbe.tscn
 ```
 
+And one for Pile Up's **variants** (`GameSettings.TOWER_*` — teams, co-pilot, co-op, the race; docs/PROJECT_STATE.md §5 session AE). Free-for-all is not in it on purpose: it is "every player is a team of one", the probes above still cover it, and after the variants landed they reproduced their pre-variant output **byte for byte** — keep it that way, and diff them against a saved run after touching the team plumbing in `TowerMode.gd`. `TeamProbe` plays the other four and checks what only they can get wrong: teams alternating and members rotating, the shared pool charged to the team on the clock, support casts landing on the flyer, hexes landing on the next *rival*; co-pilot's key split (through `handle_key()`), role swaps and a skill following the crew across the swap; co-op's goal line and storm cadence (the storm casts as slot -1); and the race's two worlds, simultaneous play, identical brick order, a hex crossing towers, a real key reaching the right tower through the host, and exactly one result per race. `--only=teams|copilot|coop|race` runs one section — and **compare a section only with the same section run the same way**: physics results depend on what ran earlier in the process, so a full run and an `--only` run of one section give different (each reproducible) numbers:
+```bash
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/TeamProbe.tscn
+```
+
 Adding or replacing art means running Godot's importer first — a `preload()` of an unimported PNG is a parse error, so every check above fails misleadingly until this has run:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --import
