@@ -175,7 +175,10 @@ func _draw_heading(font: Font) -> void:
 		title_color = Color(c.r, c.g, c.b, 1.0).lightened(0.15)
 	elif GameSettings.cup_round == 0:
 		title = "THE %s" % cup["title"]
-		sub = "first to %d trophies wins — 1st place 3, 2nd 2, 3rd 1, 4th none" % GameSettings.CUP_TARGET
+		if GameSettings.tower_cup == GameSettings.TOWER_CUP_TEAM:
+			sub = "first team to %d trophies wins — 3 for winning a round, none for losing it" % GameSettings.CUP_TARGET
+		else:
+			sub = "first to %d trophies wins — 1st place 3, 2nd 2, 3rd 1, 4th none" % GameSettings.CUP_TARGET
 	else:
 		var played: int = GameSettings.cup_variant(GameSettings.cup_round - 1)
 		title = "ROUND %d — %s" % [GameSettings.cup_round, GameSettings.tower_variant_info(played)["title"]]

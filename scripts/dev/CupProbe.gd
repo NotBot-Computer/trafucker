@@ -121,12 +121,12 @@ func _sums() -> void:
 	_expect("team cup 3p members of the left", GameSettings.cup_members(0), [0, 2])
 	_expect("team cup 3p members of the right", GameSettings.cup_members(1), [1])
 	GameSettings.cup_record([1, 0])
-	_expect("team cup 3/2", GameSettings.cup_scores, [2, 3])
-	_expect_cars("team cup 3p, the right (P2 alone) wins", [[1, 1], [1, 1, 1]])
+	_expect("team cup 3/0", GameSettings.cup_scores, [0, 3])
+	_expect_cars("team cup 3p, the right (P2 alone) wins", [[], [1, 1, 1]])
 	_setup(GameSettings.TOWER_CUP_TEAM, 4)
 	GameSettings.cup_record([0, 1])
-	_expect_cars("team cup 4p, the left (P1 + P3) wins", [[0, 2, 0], [0, 2]])
-	print("  awards %s, target %d" % [GameSettings.CUP_AWARDS, GameSettings.CUP_TARGET])
+	_expect_cars("team cup 4p, the left (P1 + P3) wins", [[0, 2, 0], []])
+	print("  awards %s (team cup %s), target %d" % [GameSettings.CUP_AWARDS, GameSettings.CUP_TEAM_AWARDS, GameSettings.CUP_TARGET])
 
 func _expect(what: String, got: Array, want: Array) -> void:
 	if got != want:

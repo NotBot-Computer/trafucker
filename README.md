@@ -61,12 +61,12 @@ Picked on the screen after **PILE UP**, which offers **FREE FOR ALL**, **RACE**,
 
 ### Cups
 
-A cup is several rounds of Pile Up, **a different variant every round**, scored by where you finish: **3 trophies for 1st, 2 for 2nd, 1 for 3rd, none for 4th**. First to **15 trophies** wins the cup. Two of them, on the variant screen:
+A cup is several rounds of Pile Up, **a different variant every round**, scored by where you finish: **3 trophies for 1st, 2 for 2nd, 1 for 3rd, none for 4th** — in the team cup, **3 for the winning team and none for the losers**. First to **15 trophies** wins the cup. Two of them, on the variant screen:
 
 | Cup | Where | Players | Rounds, in turn |
 |---|---|---|---|
 | **CUP** | top level | 2-4 | Free for all → Race → Free for all → … |
-| **TEAM CUP** | under **TEAM MODES** | 3-4 | Teams → Team Race → Co-Pilot → … (Co-Pilot only with four) — the trophies go to the team |
+| **TEAM CUP** | under **TEAM MODES** | 3-4 | Teams → Team Race → Co-Pilot → … (Co-Pilot only with four) — the trophies go to the team: 3 for a round won, 0 for a round lost, so it's first to five wins |
 
 Between rounds a **trophy count** shows every player's (or team's) row, marked by their own car on the left. Each trophy is a car **in the colour of whoever won that round**: if blue wins, the winner gets three blue cars, 2nd two blue cars and 3rd one; if purple wins the next round, that round's trophies are all purple. So each row is a coloured history of the cup — whose rounds you scored in — with dark empty spaces up to a finish flag at 15. A winning team's trophies alternate its two members' colours. It names the mode coming next; **Enter** starts it (the first Enter skips the count-up). A round's result screen moves on to the count by itself after a few seconds, or straight away on Enter. How a round is ranked: on one tower, whoever is left standing is 1st and the rest in reverse order of going out; in a race, whoever crosses the line is 1st, then anyone still building by height, then whoever dropped out, last one out highest. If two players pass 15 in the same round, the higher total wins, and a tie goes to whoever placed better in that round. **Esc** leaves the cup.
 

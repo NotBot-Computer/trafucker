@@ -107,10 +107,15 @@ var tower_cup: int = TOWER_CUP_NONE
 
 const CUP_TARGET := 15
 # Trophies by place, 1st first — exactly as asked. Note what that means with
-# only two competitors (a two-player cup, or the team cup): the loser still
-# banks 2 a round, so the gap only ever opens by 1 and the cup is in effect
-# decided over a fixed five or six rounds. Unplayed; this is the line to change.
+# only two players in the solo cup: the loser still banks 2 a round, so the
+# gap only ever opens by 1 and the cup is in effect decided over a fixed five
+# or six rounds. Unplayed; this is the line to change.
 const CUP_AWARDS: Array[int] = [3, 2, 1, 0]
+# The team cup's, which always has exactly two sides: the winners take 3 and
+# the losers nothing, so it is first to five round wins. It used the table
+# above at first, and that made it the same fixed six-round series — the
+# user asked for this instead.
+const CUP_TEAM_AWARDS: Array[int] = [3, 0]
 
 # The picker rows for the cups, in TOWER_VARIANTS' format plus `rounds`: the
 # variants the cup cycles through, in order. A round whose variant cannot be
@@ -118,7 +123,7 @@ const CUP_AWARDS: Array[int] = [3, 2, 1, 0]
 # short-handed.
 const TOWER_CUPS: Array[Dictionary] = [
 	{"id": TOWER_CUP_SOLO, "group": "", "title": "CUP", "hint": "a new mode every round — 3 trophies for 1st, 2 for 2nd, 1 for 3rd, first to 15", "counts": [2, 3, 4], "rounds": [TOWER_FFA, TOWER_RACE_SOLO]},
-	{"id": TOWER_CUP_TEAM, "group": "teams", "title": "TEAM CUP", "hint": "teams, team race and co-pilot in turn — first team to 15 trophies", "counts": [3, 4], "rounds": [TOWER_TEAMS, TOWER_RACE, TOWER_COPILOT]},
+	{"id": TOWER_CUP_TEAM, "group": "teams", "title": "TEAM CUP", "hint": "teams, team race and co-pilot in turn — 3 trophies a round won, first team to 15", "counts": [3, 4], "rounds": [TOWER_TEAMS, TOWER_RACE, TOWER_COPILOT]},
 ]
 
 var cup_scores: Array[int] = [] # per competitor
@@ -171,8 +176,12 @@ func cup_name(competitor: int) -> String:
 		return tower_team_name(competitor, TOWER_TEAMS)
 	return PLAYER_CONFIGS[competitor]["name"] if competitor < PLAYER_CONFIGS.size() else "?"
 
+func cup_awards() -> Array[int]:
+	return CUP_TEAM_AWARDS if tower_cup == TOWER_CUP_TEAM else CUP_AWARDS
+
 func cup_award(place: int) -> int:
-	return CUP_AWARDS[place] if place >= 0 and place < CUP_AWARDS.size() else 0
+	var table: Array[int] = cup_awards()
+	return table[place] if place >= 0 and place < table.size() else 0
 
 # A fresh cup for the players and colours already chosen.
 func cup_reset() -> void:

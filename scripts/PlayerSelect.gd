@@ -62,7 +62,7 @@ func _seating_hint(variant: int) -> String:
 # change between its rounds.
 func _cup_hint() -> String:
 	if GameSettings.tower_cup == GameSettings.TOWER_CUP_TEAM:
-		return "Left team: P1 + P3      Right team: P2 + P4 — co-pilot rounds only with four"
+		return "Left team: P1 + P3      Right team: P2 + P4 — winning a round is 3 trophies, losing it none, first to %d" % GameSettings.CUP_TARGET
 	return "Free for all, then a race, and round again — 1st 3 trophies, 2nd 2, 3rd 1, first to %d" % GameSettings.CUP_TARGET
 
 # `solo` is the race's single-player entry point: that mode is a race between
