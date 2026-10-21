@@ -1,7 +1,7 @@
 extends RigidBody2D
 class_name TowerPiece
 
-## One brick in Pile Up (GameSettings.MODE_TOWER) — a tetromino or a
+## One brick in Pile Up — a tetromino or a
 ## pentomino, whichever GameSettings.BRICKS entry it was built from.
 ##
 ## This is a real `RigidBody2D` and nothing about it snaps to a grid — the

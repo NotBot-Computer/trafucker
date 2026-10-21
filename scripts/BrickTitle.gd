@@ -52,7 +52,7 @@ const DROP_DELAY := 0.07 # between one letter starting to fall and the next
 const DROP_TIME := 0.32
 const BOUNCE_TIME := 0.16
 
-@export var text := "TRAFFIC TOWER"
+@export var text := "PILE UP"
 @export var cell_art := 6 # art pixels per cell; a cell is cell_art * PIX on screen
 @export var animate := true
 

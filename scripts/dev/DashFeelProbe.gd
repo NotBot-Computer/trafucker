@@ -55,7 +55,6 @@ var _rows: Array[Dictionary] = []
 
 func _ready() -> void:
 	seed(20260825) # the brick this lands on shouldn't vary between runs
-	GameSettings.mode = GameSettings.MODE_TOWER
 	GameSettings.player_count = 2
 	_mode = TOWER.instantiate()
 	add_child(_mode)

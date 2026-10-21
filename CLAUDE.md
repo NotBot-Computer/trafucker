@@ -1,6 +1,6 @@
-# Traffic Tower — CLAUDE.md
+# Pile Up — CLAUDE.md
 
-Godot 4.7 local-multiplayer dodge-traffic party game. See [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) for the full technical handoff (architecture, decisions, current state, next steps) before making changes — read it first, it's the source of truth for project context.
+Godot 4.7 local-multiplayer physics tower-stacking party game. **Until 2026-10-21 this repo was Traffic Tower, with two modes**; the racing mode, Don't Crash, was split off into its own repository (`github.com/NotBot-Computer/dont-crash`, checked out at `~/Desktop/dont-crash`) and this one is Pile Up alone (docs/PROJECT_STATE.md §0). See [docs/PROJECT_STATE.md](docs/PROJECT_STATE.md) for the full technical handoff (architecture, decisions, current state, next steps) before making changes — read it first, it's the source of truth for project context.
 
 ## Run / validate
 
@@ -13,14 +13,12 @@ Headless compile check (catches GDScript parse/compile errors only — does NOT 
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --quit
 ```
-Any `SCRIPT ERROR:` or `Failed to load script` in the output means a script is broken. Clean output (just the engine banner line) means all scripts *reachable from the boot scene* compiled — **the bare command only boots `MainMenu.tscn` and quits, so it never loads `Main.tscn`/`PlayerBoard.gd`/`Road.gd`/`LaneDivider.gd` or anything else only reached by playing through the menu flow.** A parse error in one of those scripts can ship silently past this check (this happened once — see docs/PROJECT_STATE.md §8/§12). When changing a script that isn't in the boot scene's own chain, also run the check against the actual scene, e.g.:
+Any `SCRIPT ERROR:` or `Failed to load script` in the output means a script is broken. Clean output (just the engine banner line) means all scripts *reachable from the boot scene* compiled — **the bare command only boots `MainMenu.tscn` and quits, so it never loads `TowerMode.tscn`/`TowerRace.tscn`/`TowerCup.tscn` or anything else only reached by playing through the menu flow.** A parse error in one of those scripts can ship silently past this check (this happened once — see docs/PROJECT_STATE.md §8/§12). When changing a script that isn't in the boot scene's own chain, also run the check against the actual scene, e.g.:
 ```bash
-cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --quit res://scenes/Main.tscn
+cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --quit res://scenes/TowerMode.tscn
 ```
 
-Let the bot play it for you (`scripts/BotDriver.gd`): **1-4** hands player 1-4's board to the AI, or takes it back — on the skin-select screen or at any point mid-round — and **5** cycles EASY/NORMAL/HARD. The player-count screen also has a **1 PLAYER vs BOT** button. Turn every board over to it and the round plays itself, which is the fastest way to watch a change work without holding the keys. Note this is still manual playtesting: it verifies nothing on its own, you have to watch it.
-
-**Pile Up (the tower mode) has no bot**, so there is nothing to hand it to — but it does have a headless harness that plays whole matches and checks the physics and the turn loop:
+**Pile Up has no bot**, so there is nothing to hand a round to — but it does have a headless harness that plays whole matches and checks the physics and the turn loop:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/TowerProbe.tscn -- --spread=0.3
 ```
@@ -51,16 +49,6 @@ And one for Pile Up's *pace*, which splits a turn into the descent, the settle a
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/PaceProbe.tscn
 ```
 
-And one for Don't Crash's **modular skills** (`scripts/skills/`), which runs every catalogued skill through three lifecycles — runs out, cut mid-effect, cut by a restart — and demands the board come back identical each time: no live effects, physics multipliers at exactly 1.0, the car at its normal footprint, and no leaked child node (the session-G smoke-sprite class of bug). It also checks that every id in `SELF_SKILLS`/`OPPONENT_SKILLS` is applied by something and has a glyph. Run it after touching anything under `scripts/skills/`, the pools, or `_apply_skill_effect`. It cannot see drawing — headless has no renderer — so a skill whose visuals are broken passes it:
-```bash
-cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/SkillProbe.tscn
-```
-
-And one for Don't Crash's **traffic fleet**, which force-spawns 4000 vehicles through `PlayerBoard._spawn_obstacle()` itself and checks what comes out: every kind and every texture actually appears, the observed distribution matches the weights, nothing is missing art or leaking the placeholder polygon, every `speed_mult` is under 1.0, and each kind's `height_frac` matches its own textures' aspect ratio (it fails over 8%, which is how the squashed coach was found). Run it after any change to `GameSettings.TRAFFIC_KINDS` or to the art under `sprites/cars/`. Note it says nothing about a sprite's *facing* — that check was built, measured and rejected as too noisy to trust (docs/PROJECT_STATE.md §8); new art has to be looked at:
-```bash
-cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/FleetProbe.tscn
-```
-
 And one for Pile Up's **skills** (`scripts/tower_skills/`), the counterpart of `SkillProbe` for the tower: it plays real turns in a three-player match and runs every catalogued skill through three lifecycles — runs its turns out, cut mid-effect by `_clear_skill_effects()`, cut by `_start_match()` — demanding the mode come back identical each time (nothing live or queued, every descent multiplier at 1.0, no control flipped or locked, camera zoom / `Engine.time_scale` / the space's gravity untouched, no node left under the mode, its Foreground or its HUD). It also checks the plumbing: every catalogue row is well-formed, a charge grants after `CHARGE_TO_SKILL` clean drops, and a cast outside the caster's own piloting is refused. Run it after touching anything under `scripts/tower_skills/` or the `# --- Skills` section of `TowerMode.gd`. Like `SkillProbe` it cannot see drawing, so a skill whose visuals are broken passes it:
 ```bash
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 240 res://scenes/dev/TowerSkillProbe.tscn
@@ -81,13 +69,7 @@ Adding or replacing art means running Godot's importer first — a `preload()` o
 cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --import
 ```
 
-For measuring bot behaviour rather than looking at it, `--fixed-fps` disables real-time sync and runs the simulation as fast as the machine allows, so a 60-second round takes a few seconds of wall clock:
-```bash
-cd /Users/berkantkucukomer/Desktop/traffic-tower && godot --headless --fixed-fps 120 res://scenes/Main.tscn
-```
-That boots straight into a round with `GameSettings`' defaults (2 players, no bots), so it's only useful with a throwaway scene that sets `GameSettings.player_count`/`bot_flags`/`bot_difficulty` and instantiates `Main.tscn` itself — see docs/PROJECT_STATE.md §5 session J for what that was used to find.
-
-Both modes open a round with a ~2.7s countdown (`scripts/Countdown.gd`), so anything that waits for play to start — a probe, a screenshot, your own patience — waits through it first. The Pile Up probes already do; they wait on `state == "piloting"` and simply reach it later.
+A round opens with a ~2.7s countdown (`scripts/Countdown.gd`), so anything that waits for play to start — a probe, a screenshot, your own patience — waits through it first. The probes already do; they wait on `state == "piloting"` and simply reach it later.
 
 Godot binary lives at `/opt/homebrew/bin/godot` (CLI) — there's also `Godot.app` in `/Applications` for the GUI editor, but the `godot` CLI command works for both editor (`godot .`) and headless (`godot --headless ...`) use.
 

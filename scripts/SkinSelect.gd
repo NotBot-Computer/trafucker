@@ -17,15 +17,10 @@ var panel_refs: Array[Dictionary] = []
 # again — which with bot slots (which are ready the instant they are toggled)
 # is far easier to hit than it used to be.
 var starting: bool = false
-# Pile Up has no BotDriver equivalent, so this screen drops the bot hotkeys
-# and hints there rather than offering a toggle that would do nothing. It is
-# still in the flow for both modes because both need a colour per player —
-# in the tower it identifies whose brick is in the air and whose lives are
-# whose, since every brick already on the pile looks the same.
-var race: bool = true
+# Every player needs a colour: it identifies whose brick is in the air and
+# whose lives are whose, since every brick already on the pile looks the same.
 
 func _ready() -> void:
-	race = GameSettings.mode == GameSettings.MODE_RACE
 	var count: int = GameSettings.player_count
 	indices.resize(count)
 	ready_flags.resize(count)
@@ -88,11 +83,8 @@ func _cycle(current: int, taken: Array[int], delta: int) -> int:
 			break
 	return next
 
-# A bot slot needs nobody to lock it in — it is ready the moment it is
-# switched on, keeping whatever colour it was already showing. That is what
-# makes the single-player path (and an all-bot round) start on its own.
 func _is_ready(slot: int) -> bool:
-	return (race and GameSettings.bot_flags[slot]) or ready_flags[slot]
+	return ready_flags[slot]
 
 func _refresh() -> void:
 	var all_ready := true
@@ -103,20 +95,13 @@ func _refresh() -> void:
 		ref["name_label"].text = skin["name"]
 		_frame_panel(ref, _is_ready(i), skin["color"])
 		var cfg: Dictionary = ref["cfg"]
-		if race and GameSettings.bot_flags[i]:
-			ref["status_label"].text = "BOT (%s)\n%s to take back" % [
-				BotDriver.DIFFICULTY_NAMES[GameSettings.bot_difficulty],
-				OS.get_keycode_string(GameSettings.BOT_TOGGLE_KEYS[i]),
-			]
-		elif ready_flags[i]:
+		if ready_flags[i]:
 			ref["status_label"].text = _team_line(i) + "READY!"
 		else:
 			ref["status_label"].text = _team_line(i) + "%s to change, %s to lock in" % [cfg["steer_label"], cfg["confirm_label"]]
 			all_ready = false
 	if all_ready:
 		hint.text = "Starting..."
-	elif race:
-		hint.text = "Choose your car color      1-4: bot      5: difficulty"
 	else:
 		hint.text = "Choose your color — it marks your brick and your lives"
 
@@ -133,7 +118,7 @@ func _refresh() -> void:
 		get_tree().change_scene_to_file(_next_scene())
 
 # A locked-in panel is ringed in its own colour. Only rebuilt when that
-# changes, or on a colour change while locked (a bot slot can be either).
+# changes.
 func _frame_panel(ref: Dictionary, locked: bool, color: Color) -> void:
 	var look: Color = color if locked else Color(0, 0, 0, 0)
 	if ref["ready_look"] == look:
@@ -146,8 +131,6 @@ func _frame_panel(ref: Dictionary, locked: bool, color: Color) -> void:
 		frame.remove_theme_stylebox_override("panel")
 
 func _next_scene() -> String:
-	if race:
-		return "res://scenes/Main.tscn"
 	# A cup opens on its standings — every count at zero and the first
 	# round's mode named — and that screen starts round one.
 	if GameSettings.tower_cup != GameSettings.TOWER_CUP_NONE:
@@ -159,8 +142,6 @@ func _next_scene() -> String:
 # are seats rather than a choice (GameSettings.tower_team_of), so this screen
 # only has to say so — the colour is still yours to pick.
 func _team_line(slot: int) -> String:
-	if race:
-		return ""
 	var v: int = GameSettings.tower_variant
 	if v == GameSettings.TOWER_FFA or v == GameSettings.TOWER_COOP or v == GameSettings.TOWER_RACE_SOLO:
 		return ""
@@ -173,19 +154,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	var key: int = event.keycode
 	var changed := false
-
-	# Same 1-4 / 5 hotkeys as mid-round (see GameSettings.BOT_TOGGLE_KEYS),
-	# so "make P2 a bot" is one key in the same place whether you decide it
-	# here or twenty seconds into the race.
-	var slot: int = GameSettings.BOT_TOGGLE_KEYS.find(key) if race else -1
-	if slot != -1 and slot < panel_refs.size():
-		GameSettings.set_bot(slot, not GameSettings.bot_flags[slot])
-		_refresh()
-		return
-	if race and key == GameSettings.BOT_DIFFICULTY_KEY:
-		GameSettings.bot_difficulty = BotDriver.next_difficulty(GameSettings.bot_difficulty)
-		_refresh()
-		return
 
 	for i in range(panel_refs.size()):
 		if _is_ready(i):

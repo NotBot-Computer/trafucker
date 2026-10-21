@@ -128,7 +128,6 @@ func _spawn(variant: int, count: int, seed_value: int) -> void:
 	# (PROJECT_STATE §7).
 	seed(seed_value)
 	_rng.seed = seed_value
-	GameSettings.mode = GameSettings.MODE_TOWER
 	GameSettings.tower_variant = variant
 	GameSettings.player_count = count
 	var cols: Array[Color] = []
@@ -405,7 +404,6 @@ func _spawn_race(count: int, seed_value: int, variant: int = GameSettings.TOWER_
 	await get_tree().physics_frame
 	seed(seed_value)
 	_rng.seed = seed_value
-	GameSettings.mode = GameSettings.MODE_TOWER
 	GameSettings.tower_variant = variant
 	GameSettings.player_count = count
 	var cols: Array[Color] = []

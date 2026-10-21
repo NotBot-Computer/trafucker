@@ -90,7 +90,6 @@ func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if str(arg).begins_with("--spread="):
 			_aim_spread = float(str(arg).split("=")[1])
-	GameSettings.mode = GameSettings.MODE_TOWER
 	GameSettings.player_count = PLAYER_COUNT
 	var colors: Array[Color] = []
 	for i in range(PLAYER_COUNT):

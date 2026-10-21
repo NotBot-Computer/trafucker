@@ -1,46 +1,33 @@
-# Traffic Tower
+# Pile Up
 
-A local party game about cars, played two ways: race them, or stack them. Styled after retro top-down pixel art, with a "many small competitive modes" structure inspired by *Tricky Towers*.
+A local party game about stacking bricks on a tower that would rather fall over. Styled after retro pixel art, inspired by *Tricky Towers*.
 
-Built in **Godot 4**.
+Built in **Godot 4**. It started life as one of the two modes of *Traffic Tower*; the other mode, the split-screen racer **Don't Crash**, now lives in its own repository (github.com/NotBot-Computer/dont-crash).
 
-## Modes
+## How it plays
 
-**Don't Crash** — split-screen. Steer between lanes, avoid traffic, survive as long as possible. Speed ramps up over time. Three lives each: a crash costs one and knocks you down to a crawl, and you're only out once all three are gone. Whoever covers the most distance wins the round.
-
-**Pile Up** — one shared tower. Players take turns steering bricks down onto a single narrow platform, under real physics. When everything stops moving, anything that fell off costs the player who dropped it a life. Three lives each; last builder standing wins. That's **free-for-all**, one of five ways to play it — see [Pile Up's variants](#pile-ups-variants). Pile Up is always played as a **cup**: a run of rounds in a different variant each time, first to 15 trophies (see [Cups](#cups)).
+One shared tower. Players take turns steering bricks down onto a single narrow platform, under real physics. When everything stops moving, anything that fell off costs the player who dropped it a life. Three lives each; last builder standing wins. That's **free-for-all**, one of five ways to play it — see [Pile Up's variants](#pile-ups-variants). Pile Up is always played as a **cup**: a run of rounds in a different variant each time, first to 15 trophies (see [Cups](#cups)).
 
 ## Playing it
 
-Launch the game and you'll get: pick a mode → (Pile Up only: pick a variant) → pick how many players → each player cycles and locks in a color → off you go.
+Launch the game and you'll get: pick the solo cup or the team cup → pick how many players → each player cycles and locks in a color → the cup's trophy count, which starts the first round.
 
-In **Don't Crash** that colour is your car, the three hearts trailing behind it, and each board always has 5 lanes, regardless of player count. In **Pile Up** it marks whichever brick is currently in the air — every brick already on the pile looks the same, whoever put it there — and the three hearts on your HUD card, the same pip in the same colour as the ones behind a car in the other mode.
+Your colour marks whichever brick is currently in the air — every brick already on the pile looks the same, whoever put it there — and the three hearts on your HUD card.
 
-### Playing alone, or against the computer
-
-*(Don't Crash only — there is no Pile Up AI yet.)*
-
-Pick **1 PLAYER vs BOT** on the player-count screen and you'll race a computer-driven opponent.
-
-More generally, **the 1-4 keys hand player 1-4's board to the AI, or take it back** — on the car-color screen or at any moment during a race. **5** cycles the AI between EASY, NORMAL and HARD. A board the AI is driving is labelled `BOT` under its boost bar. Hand over every board and the game plays itself, which is a handy way to watch a mode without playing it.
-
-The AI drives the same car with the same physics you do — it steers, dashes, drifts, spends boost and picks up skills through exactly the same controls, it just doesn't need a keyboard. Difficulty is how far ahead it plans and how quickly it reacts, not what it's allowed to see.
+There is no computer player yet; every seat is a person.
 
 ## Controls
-
-| Player | Left | Right | Down | Confirm / Dash | Rotate ccw / cw |
-| ------ | ---- | ----- | ---- | -------------- | --------------- |
-| P1     | A    | D     | S    | W              | Q / E           |
-| P2     | ←    | →     | ↓    | ↑              | , / .           |
-| P3     | F    | H     | G    | T              | R / Y           |
-| P4     | J    | L     | K    | I              | U / O           |
-
-### Pile Up
+| Player | Left | Right | Down | Dash | Rotate ccw / cw | Skills: self / opponent |
+| ------ | ---- | ----- | ---- | ---- | --------------- | ----------------------- |
+| P1     | A    | D     | S    | W    | Q / E           | Z / X                   |
+| P2     | ←    | →     | ↓    | ↑    | , / .           | N / M                   |
+| P3     | F    | H     | G    | T    | R / Y           | V / B                   |
+| P4     | J    | L     | K    | I    | U / O           | ; / '                   |
 
 Your brick starts falling the moment it appears — there is no drop button, just a few seconds to place it.
 
 - **Left / right** move it **exactly half a block**. Hold to repeat.
-- **Confirm** dashes **exactly one whole block** in the direction you're holding (or the last one you pressed) — same distance as two taps, but covered in one fast sweep with a trail behind it, so you can see it land.
+- **Dash** (W / ↑ / T / I) dashes **exactly one whole block** in the direction you're holding (or the last one you pressed) — same distance as two taps, but covered in one fast sweep with a trail behind it, so you can see it land.
 - **Rotate keys** turn it a quarter turn at a time.
 - **Down** makes it fall faster, once you like the line.
 
@@ -94,32 +81,6 @@ Coming up against the side of a taller part of the tower doesn't end your turn. 
 
 The moment the brick touches down it stops being yours and becomes ordinary physics: it tips, slides and settles, and so does everything under it. The turn does not end when it lands, it ends when the *whole tower* has stopped moving — so a brick that settles innocently and then shoves the pile over five seconds later still counts against you.
 
-### Don't Crash
-
-Double-tap left or right (quickly, twice back-to-back) to **dash** exactly one lane over — a fast eased snap with a fading afterimage trail, on a short per-player cooldown.
-
-While already carrying real speed one way, press the opposite direction to start **drifting** — no separate gesture needed, just a genuine sudden reversal. The car's nose points wherever you're steering, but its actual momentum lags behind at reduced grip (not increased speed), so it visibly slides, leaving a twin skid-mark trail from the rear wheels. Keeps drifting as long as you keep steering in either direction; lets go of grip the instant you release both keys.
-
-You have **three lives**, shown as three hearts in your own car's colour trailing along the road behind you. Hitting traffic wrecks the car you hit, costs a heart, and drops you to a crawl — you then blink for a couple of seconds, during which traffic passes straight through you while you get your speed back. Lose all three and you're out, and the round ends once nobody is left driving.
-
-Every so often a glowing pickup appears in a lane. Drive over it and two icons come up either side of your car — the round never pauses for this. The **left** one (your "opponent" key) sends something nasty to every *other* player; the **right** one (your "self" key) helps you. Which skill each side is offering is rolled when the icons appear and shown on them, so what you see is what you get. There are nine:
-
-| | Skill | What it does |
-|---|---|---|
-| self | **Tank Mode** | 6s as an invincible tank that crushes traffic; your boost key fires the cannon |
-| self | **Nitro** | lifts off and rockets up the road at 2.85x, flying *over* the traffic |
-| self | **Make Way** | 5s of siren — your car becomes a police cruiser and traffic ahead signals and pulls out of your lane |
-| self | **Pit Stop** | instantly gives back a lost life; if you have all three, fills your boost bar instead |
-| self | **Compact** | your car shrinks to two-thirds width for 7s, so tight gaps become gaps |
-| opponent | **Taxi** | a reckless cab barges onto everyone else's board and runs riot for 11s |
-| opponent | **Detour** | lines of roadworks barriers scroll down everyone else's road with one gap to find |
-| opponent | **Oil Slick** | everyone else loses their grip for 5s — the car overshoots, fishtails and arrives late |
-| opponent | **Smoke Screen** | a bank of smoke hides the top of everyone else's road for 5s, so traffic emerges late |
-
-The six newer ones each live in their own file under `scripts/skills/`; their icons and Detour's barrier are placeholders drawn in code — `docs/SKILL_ART_BRIEF.md` is the brief for real art, which drops in by filename with no code change.
-
-Press **Enter** to restart after a round ends. Press **Esc** during a round to return to the main menu. **1-4** toggle the AI for each player and **5** changes its difficulty (see above).
-
 ## Running it
 
 Open the project folder in the Godot 4 editor (`godot --path .` from this directory, or `Import` from the project manager), then press **F5** / the Play button.
@@ -136,7 +97,7 @@ The tower itself stands on a rock outcrop whose body is cut from the same pictur
 
 ## Menu art
 
-The menus — the title screen, the cup picker, the player count, the colour pick and the cup's trophy count — are pixel art built from Pile Up's own bricks. The title screen, Pile Up's cup picker and the player count are rows of big cards, picked with the **left/right arrow keys**, chosen with **Enter** and left with **Esc** (the mouse does nothing there). Each card is just a preview and a name; the selected one plays its preview and the rest hold still, dimmed: cars driving up the road for Don't Crash, bricks falling and piling up for Pile Up, one tower for the solo cup and two for the team cup, and on the player count that many split-screen roads with a car each, or that many strips with a brick falling in each. The title is spelled in bricks: each letter is one brick-shaped piece, outlined and bevelled the way the bricks are, in the seven classic bricks' colours, and the letters drop in when the screen opens. Behind every menu but the trophy count the bricks rain down and pile up along the bottom; a full pile sinks away and a new one starts. Buttons and panels are chunky framed boxes with notched corners, and the keyboard's current button is lit in the O brick's yellow. Nothing here is new art: shapes come from `GameSettings.BRICKS` and colours are read off the brick sprites themselves (`scripts/PixelUI.gd`).
+The menus — the title screen with its two cups, the player count, the colour pick and the cup's trophy count — are pixel art built from the game's own bricks. The title screen and the player count are rows of big cards, picked with the **left/right arrow keys**, chosen with **Enter** and left with **Esc** (the mouse does nothing there). Each card is just a preview and a name; the selected one plays its preview and the rest hold still, dimmed: one tower for the solo cup and two for the team cup, and on the player count that many strips with a brick falling in each. The title is spelled in bricks: each letter is one brick-shaped piece, outlined and bevelled the way the bricks are, in the seven classic bricks' colours, and the letters drop in when the screen opens. Behind every menu but the trophy count the bricks rain down and pile up along the bottom; a full pile sinks away and a new one starts. Buttons and panels are chunky framed boxes with notched corners, and the keyboard's current button is lit in the O brick's yellow. Nothing here is new art: shapes come from `GameSettings.BRICKS` and colours are read off the brick sprites themselves (`scripts/PixelUI.gd`).
 
 The font is **Press Start 2P** by CodeMan38 (`fonts/PressStart2P-Regular.ttf`), under the **SIL Open Font License 1.1** — the licence is committed beside it as `fonts/PressStart2P-OFL.txt`. It is imported with antialiasing, hinting and subpixel positioning off, and sized in multiples of 8 so its pixels stay square. Only the menus use it; the in-round HUDs still use Godot's default font.
 
@@ -144,48 +105,32 @@ The font is **Press Start 2P** by CodeMan38 (`fonts/PressStart2P-Regular.ttf`), 
 
 Pile Up's nineteen bricks (`sprites/blocks/piece_*.png`) are the seven tetrominoes and all twelve pentominoes, flat saturated fills inside a heavy black outline, cut from six supplied sheets (`tat1.png` - `tat6.png`) by `scripts/dev/extract_blocks.py`. That script removes each sheet's white background by flood-filling in from the border rather than by threshold — the hole in the U pentomino is background by colour and must survive — and normalises every piece to an exact grid of square cells, since a cell is 142px on one sheet and 268px on another and is drawn up to 14% wider than it is tall within a single piece. `GameSettings.BRICKS` can then give each piece its collision as plain cell-unit rectangles, generated by the same script so the two cannot drift apart. Unlike the car-part sheet this replaced, the art has no up: a flat coloured polyomino can be dropped in whatever orientation it was drawn, so the shape table follows the sheets instead of the sheets being re-laid to fit the table.
 
-## Car art
+## Player art
 
-Cars are real sprites (`sprites/cars/*.png`) — top-down orthographic pixel art across 14 vehicle kinds: sedans (12 colors: 6 selectable player skins + 6 traffic-only), SUVs, pickups, vans, sports cars, semi trucks, pickups towing trailers, transit buses, coaches, ambulances, fire trucks, garbage trucks, box trucks, and motorcycles. All of it was cropped and cleaned up from hand-drawn vehicle reference sheets, except the motorcycles, which stayed on the original top-down art — the newer motorcycle sheet is drawn as a front elevation, which reads as riding toward you in a top-down game. `GameSettings.TRAFFIC_KINDS` holds each kind's textures, size ratios, and spawn weight — the weights total 100, so each reads directly as a percentage of traffic: sedans 26%, SUVs 15%, pickups 11%, vans 10%, sports cars 8%, semi trucks 7%, motorcycles 5%, trailers 4%, transit buses 3%, box trucks 3%, coaches 2%, ambulances 2%, fire trucks 2%, garbage trucks 2%. `PlayerBoard.gd` picks a weighted-random kind and texture for every spawned traffic `Car`.
-
-The long kinds are the ones that change how a lane plays: at a 5-lane board's scale a **semi truck** is 130px of road, a **towed trailer** 124px, and the four **service vehicles** 110-120px, against a sedan's 56px — and all of them drive slowly enough that you close on them fast. The **garbage truck** is the slowest-driving thing in the table, one notch past the trailer. **Sports cars** sit at the other end — they nearly keep pace with you, so they hang alongside instead of rushing past. The **fire truck** is the widest vehicle in the game at 37px of a 53px lane, which is what its own reference art draws it as.
-
-Every `Car` (`scenes/Car.tscn`) has an empty `Sprite2D` child, so you can swap in your own art any time: open it in the editor and drag a PNG onto the Sprite2D's **Texture** property in the Inspector, or call `set_texture()` from code (see `PlayerBoard.gd` for examples). The placeholder shape (a colored `Polygon2D`) automatically hides once a texture is assigned. `Car.gd` scales whatever texture is provided to the car's collision size.
-
-## Road art
-
-The road and median are real textures too (`sprites/road/*.png`), both cropped from the same hand-drawn source image so their grass/guardrail style matches exactly. `Road.gd` and `LaneDivider.gd` scroll them by drawing repeated tiles offset by accumulated distance, instead of procedurally drawing lanes/grass. `Road.SHOULDER_RATIO` is tuned to the texture's actual asphalt width so cars only ever drive on the gray part.
-
-Traffic also moves at slightly different speeds per vehicle (`PlayerBoard._spawn_obstacle` assigns each one a random `speed_mult`) so gaps open and close between cars instead of the whole field scrolling in perfect lockstep.
+Each player's colour is shown as a car (`sprites/cars/sedan_*.png`, six colours) on the colour pick, and the cup's trophies are drawn as the car of whoever won the round — the last of the art from the racing game this one was split from.
 
 ## Project structure
 
 ```
 project.godot
 sprites/
-  cars/               top-down vehicle PNGs (sedans, SUVs, pickups, vans, sports cars, semi trucks, trailers, buses, coaches, motorcycles)
-  road/               road + median tile textures, cropped from one source image
+  cars/               the six player cars (colour swatches and trophies)
   blocks/             Pile Up's nineteen bricks — 7 tetrominoes, 12 pentominoes
   bg/                 Pile Up's parallax backdrop
-  ui/                 countdown glyphs, and the heart both modes show a life with
-  skills/             PLACEHOLDER choice-icon glyphs + Detour's barrier, generated by scripts/dev/make_placeholder_skill_icons.py
+  ui/                 countdown glyphs, and the life heart
+  skills/             Pile Up skill icons (placeholders, from scripts/dev/make_tower_skill_icons.py)
 fonts/                Press Start 2P (the menus' pixel font) and its SIL OFL 1.1 licence
 scenes/
-  MainMenu.tscn       title screen, mode picker
-  TowerVariantSelect.tscn  Pile Up's first screen: the solo cup or the team cup
-  PlayerSelect.tscn    choose how many players (Pile Up: only the counts the variant allows)
-  SkinSelect.tscn      each player picks + locks in a car sprite
-  Main.tscn            N PlayerBoards side by side, round state, restart UI
-  PlayerBoard.tscn     one player's road + car + obstacle spawner
-  Car.tscn             sprite/placeholder + collision, reused for player and traffic
-  LaneDivider.tscn     grass + trees median between adjacent player boards
+  MainMenu.tscn       title screen: the solo cup or the team cup
+  PlayerSelect.tscn    choose how many players (only the counts the cup allows)
+  SkinSelect.tscn      each player picks + locks in a colour
   TowerMode.tscn       Pile Up: the shared tower, its platform and its HUD
   TowerRace.tscn       Pile Up's races: a TowerMode per team (or per player) side by side in SubViewports
   TowerCup.tscn        a cup's trophy count, between its rounds
   TowerPiece.tscn      one car-tetromino brick (a real RigidBody2D)
 scripts/
   GameSettings.gd      autoload: player count, chosen skins, sprite tables, key bindings
-  MainMenu.gd
+  MainMenu.gd          the title screen and cup picker, built from GameSettings.TOWER_CUPS
   PlayerSelect.gd
   PixelUI.gd           the menus' pixel look: font, framed buttons and panels, bricks redrawn as pixel art
   BrickRain.gd         bricks raining and piling up behind a menu
@@ -193,16 +138,9 @@ scripts/
   ModeCard.gd          one menu card with its live preview
   CardRow.gd           a row of cards picked with the arrow keys, Enter and Esc
   SkinSelect.gd        dynamic per-player sprite-pick panels, duplicate-skin avoidance
-  Main.gd              instantiates PlayerBoards + dividers for the chosen player count
-  PlayerBoard.gd        steering physics, spawning, scoring, collision handling
-  BotDriver.gd          the AI: reads the traffic, plans a lane, drives PlayerBoard's own controls
-  Road.gd               lane math and scrolling road-texture rendering
-  Car.gd                 swaps between placeholder shape and an assigned texture
-  HeartPips.gd          the life pip both modes draw, and its per-player recolour
-  LaneDivider.gd         scrolling grass/tree median renderer
+  HeartPips.gd          the life pip, and its per-player recolour
   TowerMode.gd          Pile Up: turn order, drop/settle/resolve loop, lives, camera
                         — and the variants: teams, crews, goal lines, the storm
-  TowerVariantSelect.gd the cup picker, built from GameSettings.TOWER_CUPS
   TowerRace.gd          hosts a race's towers, relays hexes (to the leader), owns its result screen
   TowerCup.gd           the cup's trophy count: each player's cars by the round, and the next round's mode
   TowerPiece.gd         one brick: collision from cell rects, physics material, fall cap
@@ -210,13 +148,12 @@ scripts/
   TowerHUD.gd           Pile Up's side-column panels — lives, next brick, controls
   TowerBackground.gd    Pile Up's parallax backdrop
   TowerGround.gd        Pile Up's near ground — a foreground layer bricks fall behind
-  skills/               Don't Crash's modular skills — one file each, plus the base class, the catalog and the overlay node
+  tower_skills/         Pile Up's skills — the contract, the catalogue (three packs) and one file per skill
   dev/                  headless measurement harnesses, not part of the game
 ```
 
 ## Roadmap
 
-- More competitive mini-modes beyond the two above (time attack, reverse traffic, narrowing lanes, item pickups, etc.)
-- An AI that can play Pile Up, so it has the same hand-it-to-a-bot testing loop Don't Crash has
+- An AI that can play Pile Up, so a round can be handed to a bot and watched
 - Gamepad support
 - Export to web (HTML5) and/or desktop builds

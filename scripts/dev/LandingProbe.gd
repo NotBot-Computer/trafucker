@@ -66,7 +66,6 @@ func _ready() -> void:
 	# mean on consecutive runs before this line existed.
 	seed(20260825)
 	_rng.seed = 4242
-	GameSettings.mode = GameSettings.MODE_TOWER
 	GameSettings.player_count = 2
 	var cols: Array[Color] = [Color.RED, Color.BLUE]
 	GameSettings.skin_colors = cols

@@ -1,41 +1,57 @@
 extends Control
 
-## Mode picker. GameSettings.mode is set here and then read by PlayerSelect
-## (which hides the race-only single-player option) and by SkinSelect (which
-## decides which scene to hand off to). Nothing downstream re-derives it.
-## Pile Up goes through one more screen first — TowerVariantSelect, which
-## picks the solo or the team cup.
+## The title screen, and the choice it offers: alone or in teams. Both are a
+## cup (GameSettings.TOWER_CUPS) — a run of rounds, a different variant every
+## round, trophies by place — and nothing else is offered: every variant is
+## played as one of a cup's rounds, asked for so that Pile Up is always a cup
+## whichever way you play it. PlayerSelect then offers only the counts the
+## chosen cup allows, and the first round's variant is set here so the count
+## and colour screens seat people the way that round will.
 ##
-## Two big cards side by side, one per mode, each with a live preview of its
-## mode that runs while it is the selected one (ModeCard, in a CardRow).
-## Driven by the keyboard alone: left/right choose, Enter (or Space) plays;
-## the mouse does nothing here. Coming back from a mode's screens, that mode
-## is the one selected.
+## A card per cup, built from the table so the list of cups and the screen
+## that offers them cannot disagree, picked like the main menu's (CardRow:
+## left/right, Enter). The solo cup's preview is one tower, the
+## team cup's two towers face to face. The card carries only the cup's name;
+## the line under the title is the selected cup's hint.
 ##
-## The rest of the look (the pixel font, the brick rain and the brick title)
-## is shared by every menu screen — see PixelUI.
+## It used to list the variants themselves, with the team ones on a page of
+## their own under TEAM MODES and each page's cup last; see
+## docs/PROJECT_STATE.md §5 sessions AE, AG and AH. And it used to be a second
+## screen, after a main menu that picked between this game and a racing game;
+## that one is its own project now (docs/PROJECT_STATE.md §0), so this is
+## where the game opens and where every "back to the menu" lands.
 
 const PixelUI := preload("res://scripts/PixelUI.gd")
 const ModeCard := preload("res://scripts/ModeCard.gd")
 
 @onready var row: Control = $Cards
+var _cups: Array[Dictionary] = []
 
 func _ready() -> void:
+	$Subtitle.text = "a different mode every round — first to %d trophies wins" % GameSettings.CUP_TARGET
 	PixelUI.apply(self)
-	row.add_card(_card(ModeCard.Kind.RACE, "DON'T CRASH"))
-	row.add_card(_card(ModeCard.Kind.TOWER, "PILE UP"))
-	row.chosen.connect(func(i: int): _play(GameSettings.MODE_TOWER if i == 1 else GameSettings.MODE_RACE))
-	row.select(1 if GameSettings.mode == GameSettings.MODE_TOWER else 0)
+	add_child(PixelUI.key_badge("← →  CHOOSE   ENTER  OK", true))
 
-func _card(kind: int, title: String) -> Control:
-	var c: Control = ModeCard.new()
-	c.kind = kind
-	c.title = title
-	return c
+	var first := 0
+	for c: Dictionary in GameSettings.TOWER_CUPS:
+		var card: Control = ModeCard.new()
+		card.title = c["title"]
+		if c["id"] == GameSettings.TOWER_CUP_TEAM:
+			card.kind = ModeCard.Kind.TOWERS
+			card.count = 2
+		else:
+			card.kind = ModeCard.Kind.TOWER
+		if c["id"] == GameSettings.tower_cup:
+			first = _cups.size()
+		_cups.append(c)
+		row.add_card(card)
+	row.selection_changed.connect(func(i: int): $Hint.text = _cups[i]["hint"])
+	row.chosen.connect(func(i: int): _pick_cup(_cups[i]["id"]))
+	row.select(first)
 
-func _play(mode: int) -> void:
-	GameSettings.mode = mode
-	if mode == GameSettings.MODE_TOWER:
-		get_tree().change_scene_to_file("res://scenes/TowerVariantSelect.tscn")
-	else:
-		get_tree().change_scene_to_file("res://scenes/PlayerSelect.tscn")
+# The scores themselves start when the colours are locked (SkinSelect), once
+# the number of players is known.
+func _pick_cup(cup: int) -> void:
+	GameSettings.tower_cup = cup
+	GameSettings.tower_variant = GameSettings.tower_cup_info(cup)["rounds"][0]
+	get_tree().change_scene_to_file("res://scenes/PlayerSelect.tscn")

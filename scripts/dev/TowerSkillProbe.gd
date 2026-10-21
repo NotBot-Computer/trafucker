@@ -55,7 +55,6 @@ var _failures: Array[String] = []
 func _ready() -> void:
 	seed(20260907)
 	_rng.seed = 907
-	GameSettings.mode = GameSettings.MODE_TOWER
 	GameSettings.player_count = PLAYERS
 	var cols: Array[Color] = [Color.RED, Color.BLUE, Color.GREEN]
 	GameSettings.skin_colors = cols

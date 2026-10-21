@@ -40,7 +40,6 @@ var _settle_clean: Array[float] = []
 func _ready() -> void:
 	seed(20260828)
 	_rng.seed = 5150
-	GameSettings.mode = GameSettings.MODE_TOWER
 	GameSettings.player_count = 4
 	var cols: Array[Color] = [Color.RED, Color.BLUE, Color.GREEN, Color.YELLOW]
 	GameSettings.skin_colors = cols

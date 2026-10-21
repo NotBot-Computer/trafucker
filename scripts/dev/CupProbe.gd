@@ -69,7 +69,6 @@ func _fail(what: String) -> void:
 	print("  <-- " + what)
 
 func _setup(cup: int, count: int) -> void:
-	GameSettings.mode = GameSettings.MODE_TOWER
 	GameSettings.tower_cup = cup
 	GameSettings.player_count = count
 	var cols: Array[Color] = []

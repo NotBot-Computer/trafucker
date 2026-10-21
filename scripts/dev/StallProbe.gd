@@ -54,7 +54,6 @@ func _ready() -> void:
 	# TowerMode draws its pieces from the global randi(); see LandingProbe.
 	seed(20260828)
 	_rng.seed = 90210
-	GameSettings.mode = GameSettings.MODE_TOWER
 	# Four players, because lives are what bound the match and this probe
 	# needs a tower tall enough to have flanks to fall past.
 	GameSettings.player_count = 4

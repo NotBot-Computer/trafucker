@@ -1,6 +1,6 @@
 extends Node2D
 
-## Pile Up — the second game mode (GameSettings.MODE_TOWER).
+## Pile Up — the game itself.
 ##
 ## Every player builds the *same* tower, one brick at a time, on one narrow
 ## platform. Whoever is on the clock steers a brick down onto the
