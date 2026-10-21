@@ -76,5 +76,5 @@ Godot binary lives at `/opt/homebrew/bin/godot` (CLI) — there's also `Godot.ap
 ## Workflow rules
 
 - **Always let the user playtest a change in the editor before running `git commit`.** This is a standing preference — do not commit immediately after an edit just because headless validation passed clean; headless checks only catch compile errors, not whether the fix actually looks/plays right.
-- Only commit once the user confirms (e.g. "it's great", "push it"). Then commit and push to `origin/main` (`github.com/NotBot-Computer/trafucker`) in the same turn unless told otherwise.
+- Only commit once the user confirms (e.g. "it's great", "push it"). Then commit and push to `origin/main` (`github.com/NotBot-Computer/pile-up`, formerly `trafucker`) in the same turn unless told otherwise.
 - Write commit messages that explain *why*, not just what — this codebase's history is full of physics/illusion bugs where the reasoning matters more than the diff (see docs/PROJECT_STATE.md's "approaches that didn't work" section).

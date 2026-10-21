@@ -8,7 +8,7 @@ This document is a standalone handoff. A new session should be able to continue 
 
 Until 2026-10-21 this repository was **Traffic Tower**, one game with two modes: **Don't Crash** (the split-screen dodge-traffic race) and **Pile Up** (the shared-tower physics stacker). At the user's request the two were split into **two separate games in two repositories**:
 
-- **Pile Up** stayed in `github.com/NotBot-Computer/trafucker`, checked out at `~/Desktop/traffic-tower`.
+- **Pile Up** stayed in this repository, renamed from `trafucker` to `github.com/NotBot-Computer/pile-up` the same day (GitHub redirects the old name), checked out at `~/Desktop/traffic-tower`.
 - **Don't Crash** moved to a new repository, `github.com/NotBot-Computer/dont-crash`, checked out at `~/Desktop/dont-crash`. It was cloned from `trafucker` at `009476b`, so it carries the whole shared history.
 
 What the split changed in this repository:
